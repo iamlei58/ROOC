@@ -882,6 +882,76 @@ begin
 end;
 $$;
 
+create or replace function public.set_raffle_prize_quantity(
+  p_slug text,
+  p_admin_pin text,
+  p_prize_id uuid,
+  p_quantity integer
+)
+returns table(id uuid, name text, provider text, quantity integer)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event public.raffle_events%rowtype;
+  v_prize public.raffle_prizes%rowtype;
+  v_used_count integer;
+begin
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
+
+  if v_event.status <> 'live' then
+    raise exception '活動已關閉，不能調整獎項名額。';
+  end if;
+
+  if p_prize_id is null then
+    raise exception '請選擇要調整的獎項。';
+  end if;
+
+  p_quantity := coalesce(p_quantity, 1);
+
+  if p_quantity < 1 or p_quantity > 200 then
+    raise exception '獎項名額必須介於 1 到 200。';
+  end if;
+
+  select *
+  into v_prize
+  from public.raffle_prizes p
+  where p.id = p_prize_id
+    and p.event_id = v_event.id
+    and p.is_active
+  for update;
+
+  if not found then
+    raise exception '找不到要調整的獎項。';
+  end if;
+
+  select count(*)::integer
+  into v_used_count
+  from public.raffle_draws d
+  where d.prize_id = v_prize.id
+    and d.status in ('pending', 'accepted', 'transferred');
+
+  if p_quantity < v_used_count then
+    raise exception '名額不能低於已抽出或待處理數量。';
+  end if;
+
+  update public.raffle_prizes p
+  set quantity = p_quantity
+  where p.id = v_prize.id
+  returning p.* into v_prize;
+
+  return query
+  select p.id, p.name, p.provider, p.quantity
+  from public.raffle_prizes p
+  where p.id = v_prize.id;
+end;
+$$;
+
 create or replace function public.delete_raffle_prize(
   p_slug text,
   p_admin_pin text,
@@ -1006,6 +1076,7 @@ begin
             'provider_member_id', prize_rows.provider_member_id,
             'quantity', prize_rows.quantity,
             'eligible_count', prize_rows.eligible_count,
+            'draw_count', prize_rows.draw_count,
             'filled_count', prize_rows.filled_count,
             'pending_count', prize_rows.pending_count,
             'remaining_count', greatest(prize_rows.quantity - prize_rows.filled_count - prize_rows.pending_count, 0),
@@ -1034,6 +1105,11 @@ begin
                     and x.member_id = m.id
                 )
             ) as eligible_count,
+            (
+              select count(*)::integer
+              from public.raffle_draws d
+              where d.prize_id = p.id
+            ) as draw_count,
             (
               select count(*)::integer
               from public.raffle_draws d
@@ -1594,6 +1670,7 @@ revoke execute on function public.set_raffle_event_status(text, text, text) from
 revoke execute on function public.delete_raffle_event(text, text) from public;
 revoke execute on function public.add_raffle_prize(text, text, text, text, integer) from public;
 revoke execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) from public;
+revoke execute on function public.set_raffle_prize_quantity(text, text, uuid, integer) from public;
 revoke execute on function public.delete_raffle_prize(text, text, uuid) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
 revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
@@ -1616,6 +1693,7 @@ grant execute on function public.set_raffle_event_status(text, text, text) to an
 grant execute on function public.delete_raffle_event(text, text) to anon, authenticated;
 grant execute on function public.add_raffle_prize(text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) to anon, authenticated;
+grant execute on function public.set_raffle_prize_quantity(text, text, uuid, integer) to anon, authenticated;
 grant execute on function public.delete_raffle_prize(text, text, uuid) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;

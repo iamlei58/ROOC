@@ -863,6 +863,38 @@
           </form>
         </div>
       </dialog>
+
+      <dialog class="modal compact-modal confirm-modal" id="confirm-dialog">
+        <div class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="section-label">Confirm</p>
+              <h3 id="confirm-dialog-title">確認操作</h3>
+            </div>
+            <button class="btn icon-button" type="button" id="confirm-dialog-close" aria-label="關閉確認視窗">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="confirm-body">
+            <div class="confirm-icon" aria-hidden="true">
+              <i data-lucide="triangle-alert"></i>
+            </div>
+            <p id="confirm-dialog-message">確定要繼續嗎？</p>
+          </div>
+
+          <div class="button-row confirm-actions">
+            <button class="btn secondary" type="button" id="confirm-dialog-cancel">
+              <i data-lucide="x"></i>
+              <span>取消</span>
+            </button>
+            <button class="btn danger" type="button" id="confirm-dialog-accept">
+              <i data-lucide="trash-2"></i>
+              <span id="confirm-dialog-accept-label">確認</span>
+            </button>
+          </div>
+        </div>
+      </dialog>
     </main>
   </body>
 </html>

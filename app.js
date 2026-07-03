@@ -23,6 +23,7 @@ const state = {
   adminPinPrompt: null,
   adminPinMode: "",
   adminPinRequired: false,
+  confirmPrompt: null,
   occupations: [],
   members: [],
   openEvents: [],
@@ -161,6 +162,9 @@ function bindForms() {
   $("#cancel-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#dismiss-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#dismiss-change-admin-pin").addEventListener("click", cancelAdminPinPrompt);
+  $("#confirm-dialog-accept").addEventListener("click", () => closeConfirmDialog(true));
+  $("#confirm-dialog-cancel").addEventListener("click", () => closeConfirmDialog(false));
+  $("#confirm-dialog-close").addEventListener("click", () => closeConfirmDialog(false));
   $("#open-member-create-dialog").addEventListener("click", openMemberCreateDialog);
   $("#close-member-create-dialog").addEventListener("click", closeMemberCreateDialog);
   $("#open-member-import-dialog").addEventListener("click", openMemberImportDialog);
@@ -198,7 +202,8 @@ function bindDialogBackdrops() {
     ["#member-import-dialog", closeMemberImportDialog],
     ["#member-edit-dialog", closeMemberEditDialog],
     ["#occupation-dialog", closeOccupationDialog],
-    ["#admin-pin-dialog", cancelAdminPinPrompt]
+    ["#admin-pin-dialog", cancelAdminPinPrompt],
+    ["#confirm-dialog", () => closeConfirmDialog(false)]
   ]);
 
   dialogClosers.forEach((closeDialog, selector) => {
@@ -721,11 +726,6 @@ function openBonusPrizeDialog(prizeId = "") {
     return;
   }
 
-  if (prize && Number(prize.quantity || 0) >= 200) {
-    showToast("這個獎項名額已達 200，不能再加碼。", "error");
-    return;
-  }
-
   resetBonusPrizeForm();
 
   const dialog = $("#bonus-prize-dialog");
@@ -737,10 +737,10 @@ function openBonusPrizeDialog(prizeId = "") {
 
   form.dataset.mode = isExistingPrize ? "quantity" : "create";
   $("#bonus-prize-id").value = prize?.id || "";
-  $("#bonus-prize-mode").textContent = isExistingPrize ? "加碼" : "新增";
-  $("#bonus-prize-title").textContent = isExistingPrize ? "加碼既有獎項" : "新增獎項";
-  $("#bonus-prize-submit-label").textContent = isExistingPrize ? "加碼數量" : "新增獎項";
-  $("#bonus-quantity-label").textContent = isExistingPrize ? "增加名額" : "名額";
+  $("#bonus-prize-mode").textContent = isExistingPrize ? "調整" : "新增";
+  $("#bonus-prize-title").textContent = isExistingPrize ? "調整獎項名額" : "新增獎項";
+  $("#bonus-prize-submit-label").textContent = isExistingPrize ? "儲存名額" : "新增獎項";
+  $("#bonus-quantity-label").textContent = isExistingPrize ? "總名額" : "名額";
 
   $all("[data-new-prize-field]").forEach((field) => {
     field.hidden = isExistingPrize;
@@ -752,17 +752,20 @@ function openBonusPrizeDialog(prizeId = "") {
   providerSelect.required = !isExistingPrize;
 
   if (isExistingPrize) {
+    const usedCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
     destroyEnhancedSelect(providerSelect);
     $("#bonus-selected-prize").hidden = false;
-    $("#bonus-selected-prize-name").textContent = `${prize.name} / ${prize.provider} / 目前 ${prize.quantity} 名額`;
-    quantityInput.max = String(Math.max(200 - Number(prize.quantity || 0), 1));
+    $("#bonus-selected-prize-name").textContent = `${prize.name} / ${prize.provider} / 目前 ${prize.quantity} 名額，已抽或待處理 ${usedCount} 名`;
+    quantityInput.min = String(Math.max(usedCount, 1));
+    quantityInput.max = "200";
+    quantityInput.value = String(prize.quantity || 1);
   } else {
     $("#bonus-selected-prize").hidden = true;
+    quantityInput.min = "1";
     quantityInput.max = "200";
+    quantityInput.value = "1";
     populatePrizeProviderSelect();
   }
-
-  quantityInput.value = "1";
 
   showModalDialog(dialog);
 
@@ -797,6 +800,7 @@ function resetBonusPrizeForm() {
   $("#bonus-prize-title").textContent = "新增獎項";
   $("#bonus-prize-submit-label").textContent = "新增獎項";
   $("#bonus-quantity-label").textContent = "名額";
+  $("#bonus-prize-quantity").min = "1";
   $("#bonus-prize-quantity").max = "200";
 
   $all("[data-new-prize-field]").forEach((field) => {
@@ -1104,10 +1108,10 @@ function renderPrizeRows(selector, prizes, emptyMessage, options = {}) {
 
   prizes.forEach((prize) => {
     const row = document.createElement("tr");
-    const atLimit = Number(prize.quantity || 0) >= 200;
-    const canBonus = options.actions && state.event?.status === "live" && !atLimit;
+    const canAdjust = options.actions && state.event?.status === "live";
     const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
-    const canDelete = options.actions && state.event?.status === "live" && drawCount === 0;
+    const anyDrawCount = Number(prize.draw_count ?? drawCount);
+    const canDelete = options.actions && state.event?.status === "live" && anyDrawCount === 0;
     row.innerHTML = `
       <td>${escapeHtml(prize.name)}</td>
       <td>${escapeHtml(prize.provider)}</td>
@@ -1116,9 +1120,9 @@ function renderPrizeRows(selector, prizes, emptyMessage, options = {}) {
       <td>${escapeHtml(prize.remaining_count)}</td>
       ${options.actions ? `
         <td class="table-actions-cell">
-          <button class="btn table-action" type="button" data-prize-action="bonus" data-prize-id="${escapeHtml(prize.id)}" ${canBonus ? "" : "disabled"}>
-            <i data-lucide="plus"></i>
-            <span>加碼</span>
+          <button class="btn table-action" type="button" data-prize-action="bonus" data-prize-id="${escapeHtml(prize.id)}" ${canAdjust ? "" : "disabled"}>
+            <i data-lucide="sliders-horizontal"></i>
+            <span>調整</span>
           </button>
           <button class="btn table-action danger-action" type="button" data-prize-action="delete" data-prize-id="${escapeHtml(prize.id)}" ${canDelete ? "" : "disabled"}>
             <i data-lucide="trash-2"></i>
@@ -1151,13 +1155,18 @@ async function deletePrize(prizeId) {
     return;
   }
 
-  const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
+  const drawCount = Number(prize.draw_count ?? (Number(prize.filled_count || 0) + Number(prize.pending_count || 0)));
   if (drawCount > 0) {
     showToast("此獎項已有抽獎紀錄，不能刪除。", "error");
     return;
   }
 
-  if (!window.confirm(`確定要刪除「${prize.name}」嗎？`)) {
+  const confirmed = await requestConfirmDialog({
+    title: "刪除獎項",
+    message: `確定要刪除「${prize.name}」嗎？這個操作無法復原。`,
+    confirmLabel: "刪除獎項"
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -1240,7 +1249,7 @@ async function handleAddPrize(event) {
     }
 
     if (prizeId) {
-      await rpc("bonus_raffle_prize_quantity", {
+      await rpc("set_raffle_prize_quantity", {
         p_slug: state.event.slug,
         p_admin_pin: state.appAdminPin,
         p_prize_id: prizeId,
@@ -1248,7 +1257,7 @@ async function handleAddPrize(event) {
       });
       closeBonusPrizeDialog();
       await loadEvent(state.event.slug);
-      showToast("獎項名額已加碼。", "success");
+      showToast("獎項名額已調整。", "success");
       return;
     }
 
@@ -2711,6 +2720,9 @@ function friendlyError(message) {
   if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元") || text.includes("管理密碼至少需要 4 個字元")) return "管理密碼至少需要 4 個字元。";
   if (text.includes("Raffle event not found") || text.includes("找不到活動")) return "找不到活動。";
   if (text.includes("Raffle event title already exists") || text.includes("活動名稱已存在")) return "活動名稱已存在。";
+  if (text.includes("名額不能低於已抽出或待處理數量")) return "名額不能低於已抽出或待處理數量。";
+  if (text.includes("找不到要調整的獎項")) return "找不到要調整的獎項。";
+  if (text.includes("獎項名額必須介於 1 到 200")) return "獎項名額必須介於 1 到 200。";
   if (text.includes("此獎項已有抽獎紀錄，不能刪除")) return "此獎項已有抽獎紀錄，不能刪除。";
   if (text.includes("找不到要刪除的獎項")) return "找不到要刪除的獎項。";
   if (text.includes("Member number already exists") || text.includes("成員編號已存在")) return "成員編號已存在。";
@@ -2727,6 +2739,35 @@ function setBusy(target, busy) {
     button.disabled = busy;
     button.classList.toggle("is-loading", busy);
   });
+}
+
+function requestConfirmDialog(options = {}) {
+  if (state.confirmPrompt) {
+    return state.confirmPrompt.promise;
+  }
+
+  const promise = new Promise((resolve) => {
+    state.confirmPrompt = { resolve, promise: null };
+  });
+  state.confirmPrompt.promise = promise;
+
+  $("#confirm-dialog-title").textContent = options.title || "確認操作";
+  $("#confirm-dialog-message").textContent = options.message || "確定要繼續嗎？";
+  $("#confirm-dialog-accept-label").textContent = options.confirmLabel || "確認";
+  showModalDialog($("#confirm-dialog"));
+  refreshIcons();
+  window.setTimeout(() => $("#confirm-dialog-cancel").focus(), 0);
+
+  return promise;
+}
+
+function closeConfirmDialog(result = false) {
+  const prompt = state.confirmPrompt;
+  state.confirmPrompt = null;
+  closeModalDialog($("#confirm-dialog"));
+  if (prompt) {
+    prompt.resolve(Boolean(result));
+  }
 }
 
 function showModalDialog(dialog) {
