@@ -14,17 +14,15 @@ create table if not exists public.raffle_app_config (
 create table if not exists public.rooc_members (
   id uuid primary key default extensions.gen_random_uuid(),
   member_no text not null unique,
-  display_name text,
+  role_name text not null,
   occupation text,
-  role_id text,
   joined_dc boolean not null default false,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check (char_length(member_no) between 1 and 80),
-  check (display_name is null or char_length(display_name) <= 120),
-  check (occupation is null or char_length(occupation) <= 120),
-  check (role_id is null or char_length(role_id) <= 120)
+  check (char_length(role_name) between 1 and 120),
+  check (occupation is null or char_length(occupation) <= 120)
 );
 
 create table if not exists public.rooc_occupations (
@@ -92,6 +90,9 @@ create unique index if not exists raffle_draws_one_pending_per_event
   on public.raffle_draws (event_id)
   where status = 'pending';
 
+create index if not exists raffle_events_title_lookup_idx
+  on public.raffle_events (lower(trim(title)));
+
 create unique index if not exists raffle_draws_unique_final_member_per_event
   on public.raffle_draws (event_id, final_member_id)
   where final_member_id is not null and status in ('accepted', 'transferred');
@@ -138,7 +139,7 @@ language sql
 stable
 set search_path = public, pg_temp
 as $$
-  select coalesce(nullif(trim(p_member.display_name), ''), p_member.member_no);
+  select p_member.role_name;
 $$;
 
 create or replace function public.assert_app_admin(p_admin_pin text)
@@ -173,19 +174,16 @@ set search_path = public, extensions, pg_temp
 as $$
 declare
   v_event_id uuid;
-  v_hash text;
 begin
-  select id, admin_pin_hash
-  into v_event_id, v_hash
+  perform public.assert_app_admin(p_admin_pin);
+
+  select id
+  into v_event_id
   from public.raffle_events
   where slug = lower(trim(p_slug));
 
   if not found then
     raise exception 'Raffle event not found.';
-  end if;
-
-  if p_admin_pin is null or extensions.crypt(p_admin_pin, v_hash) <> v_hash then
-    raise exception 'Event PIN is invalid.';
   end if;
 
   return v_event_id;
@@ -225,6 +223,35 @@ begin
   values (true, extensions.crypt(p_admin_pin, extensions.gen_salt('bf')));
 
   return query select true, 'App admin PIN initialized.';
+end;
+$$;
+
+create or replace function public.change_app_admin_pin(
+  p_current_pin text,
+  p_new_pin text
+)
+returns table(configured boolean, message text)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  p_current_pin := nullif(trim(p_current_pin), '');
+  p_new_pin := nullif(trim(p_new_pin), '');
+
+  if p_new_pin is null or char_length(p_new_pin) < 4 then
+    raise exception 'App admin PIN must be at least 4 characters.';
+  end if;
+
+  perform public.assert_app_admin(p_current_pin);
+
+  update public.raffle_app_config
+  set
+    admin_pin_hash = extensions.crypt(p_new_pin, extensions.gen_salt('bf')),
+    updated_at = now()
+  where id = true;
+
+  return query select true, 'App admin PIN changed.';
 end;
 $$;
 
@@ -332,18 +359,17 @@ $$;
 create or replace function public.upsert_rooc_member(
   p_app_admin_pin text,
   p_member_no text,
-  p_display_name text default null,
+  p_original_member_no text default null,
+  p_role_name text default null,
   p_occupation text default null,
-  p_role_id text default null,
   p_joined_dc boolean default false,
   p_is_active boolean default true
 )
 returns table(
   id uuid,
   member_no text,
-  display_name text,
+  role_name text,
   occupation text,
-  role_id text,
   joined_dc boolean,
   is_active boolean,
   updated_at timestamptz
@@ -354,14 +380,22 @@ set search_path = public, extensions, pg_temp
 as $$
 declare
   v_member_no text;
+  v_original_member_no text;
   v_occupation text;
+  v_member_id uuid;
 begin
   perform public.assert_app_admin(p_app_admin_pin);
 
   v_member_no := nullif(trim(p_member_no), '');
+  v_original_member_no := nullif(trim(p_original_member_no), '');
   v_occupation := nullif(trim(p_occupation), '');
   if v_member_no is null then
     raise exception 'Member number is required.';
+  end if;
+
+  p_role_name := nullif(trim(p_role_name), '');
+  if p_role_name is null then
+    raise exception 'Role name is required.';
   end if;
 
   if v_occupation is not null and not exists (
@@ -373,40 +407,66 @@ begin
     raise exception 'Occupation is not active.';
   end if;
 
-  insert into public.rooc_members (
-    member_no,
-    display_name,
-    occupation,
-    role_id,
-    joined_dc,
-    is_active,
-    updated_at
-  )
-  values (
-    v_member_no,
-    nullif(trim(p_display_name), ''),
-    v_occupation,
-    nullif(trim(p_role_id), ''),
-    coalesce(p_joined_dc, false),
-    coalesce(p_is_active, true),
-    now()
-  )
-  on conflict on constraint rooc_members_member_no_key do update
-  set
-    display_name = excluded.display_name,
-    occupation = excluded.occupation,
-    role_id = excluded.role_id,
-    joined_dc = excluded.joined_dc,
-    is_active = excluded.is_active,
-    updated_at = now();
+  if v_original_member_no is not null then
+    select m.id
+    into v_member_id
+    from public.rooc_members m
+    where m.member_no = v_original_member_no;
+
+    if not found then
+      raise exception 'Member not found.';
+    end if;
+
+    if exists (
+      select 1
+      from public.rooc_members m
+      where m.member_no = v_member_no
+        and m.id <> v_member_id
+    ) then
+      raise exception 'Member number already exists.';
+    end if;
+
+    update public.rooc_members
+    set
+      member_no = v_member_no,
+      role_name = p_role_name,
+      occupation = v_occupation,
+      joined_dc = coalesce(p_joined_dc, false),
+      is_active = coalesce(p_is_active, true),
+      updated_at = now()
+    where id = v_member_id;
+  else
+    insert into public.rooc_members (
+      member_no,
+      role_name,
+      occupation,
+      joined_dc,
+      is_active,
+      updated_at
+    )
+    values (
+      v_member_no,
+      p_role_name,
+      v_occupation,
+      coalesce(p_joined_dc, false),
+      coalesce(p_is_active, true),
+      now()
+    )
+    on conflict on constraint rooc_members_member_no_key do update
+    set
+      role_name = excluded.role_name,
+      occupation = excluded.occupation,
+      joined_dc = excluded.joined_dc,
+      is_active = excluded.is_active,
+      updated_at = now();
+  end if;
 
   return query
   select
     m.id,
     m.member_no,
-    m.display_name,
+    m.role_name,
     m.occupation,
-    m.role_id,
     m.joined_dc,
     m.is_active,
     m.updated_at
@@ -460,9 +520,8 @@ create or replace function public.get_rooc_members(
 returns table(
   id uuid,
   member_no text,
-  display_name text,
+  role_name text,
   occupation text,
-  role_id text,
   joined_dc boolean,
   is_active boolean,
   updated_at timestamptz
@@ -480,9 +539,8 @@ begin
   select
     m.id,
     m.member_no,
-    public.member_label(m) as display_name,
+    public.member_label(m) as role_name,
     m.occupation,
-    m.role_id,
     m.joined_dc,
     m.is_active,
     m.updated_at
@@ -491,9 +549,8 @@ begin
     and (
       v_query is null
       or m.member_no ilike '%' || v_query || '%'
-      or coalesce(m.display_name, '') ilike '%' || v_query || '%'
+      or coalesce(m.role_name, '') ilike '%' || v_query || '%'
       or coalesce(m.occupation, '') ilike '%' || v_query || '%'
-      or coalesce(m.role_id, '') ilike '%' || v_query || '%'
     )
   order by m.is_active desc, m.updated_at desc
   limit 200;
@@ -526,8 +583,14 @@ begin
     raise exception 'Title is required.';
   end if;
 
-  if p_admin_pin is null or char_length(p_admin_pin) < 4 then
-    raise exception 'Event PIN must be at least 4 characters.';
+  perform public.assert_app_admin(p_admin_pin);
+
+  if exists (
+    select 1
+    from public.raffle_events e
+    where lower(trim(e.title)) = lower(p_title)
+  ) then
+    raise exception 'Raffle event title already exists.';
   end if;
 
   v_base := public.slugify(coalesce(p_slug, p_title));
@@ -756,9 +819,8 @@ begin
         'slot_number', d.slot_number,
         'drawn_member_id', m.id,
         'member_no', m.member_no,
-        'display_name', public.member_label(m),
+        'role_name', public.member_label(m),
         'occupation', m.occupation,
-        'role_id', m.role_id,
         'joined_dc', m.joined_dc,
         'random_token', d.random_token,
         'created_at', d.created_at
@@ -780,9 +842,9 @@ begin
             'provider', draw_rows.provider,
             'slot_number', draw_rows.slot_number,
             'drawn_member_no', draw_rows.drawn_member_no,
-            'drawn_display_name', draw_rows.drawn_display_name,
+            'drawn_role_name', draw_rows.drawn_role_name,
             'final_member_no', draw_rows.final_member_no,
-            'final_display_name', draw_rows.final_display_name,
+            'final_role_name', draw_rows.final_role_name,
             'status', draw_rows.status,
             'note', draw_rows.note,
             'resolved_at', draw_rows.resolved_at
@@ -796,9 +858,9 @@ begin
             p.provider,
             d.slot_number,
             dm.member_no as drawn_member_no,
-            public.member_label(dm) as drawn_display_name,
+            public.member_label(dm) as drawn_role_name,
             fm.member_no as final_member_no,
-            public.member_label(fm) as final_display_name,
+            public.member_label(fm) as final_role_name,
             d.status,
             d.note,
             d.resolved_at
@@ -821,9 +883,9 @@ begin
             'prize_name', log_rows.prize_name,
             'slot_number', log_rows.slot_number,
             'drawn_member_no', log_rows.drawn_member_no,
-            'drawn_display_name', log_rows.drawn_display_name,
+            'drawn_role_name', log_rows.drawn_role_name,
             'final_member_no', log_rows.final_member_no,
-            'final_display_name', log_rows.final_display_name,
+            'final_role_name', log_rows.final_role_name,
             'status', log_rows.status,
             'random_token', log_rows.random_token,
             'created_at', log_rows.created_at,
@@ -837,9 +899,9 @@ begin
             p.name as prize_name,
             d.slot_number,
             dm.member_no as drawn_member_no,
-            public.member_label(dm) as drawn_display_name,
+            public.member_label(dm) as drawn_role_name,
             fm.member_no as final_member_no,
-            case when fm.id is null then null else public.member_label(fm) end as final_display_name,
+            case when fm.id is null then null else public.member_label(fm) end as final_role_name,
             d.status,
             d.random_token,
             d.created_at,
@@ -858,6 +920,58 @@ begin
 end;
 $$;
 
+create or replace function public.get_raffle_event_admin_by_title(
+  p_title text,
+  p_app_admin_pin text
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  description text,
+  status text,
+  created_at timestamptz,
+  closed_at timestamptz,
+  total_active_members bigint,
+  excluded_count bigint,
+  eligible_count bigint,
+  award_count bigint,
+  prizes jsonb,
+  pending_draw jsonb,
+  awards jsonb,
+  recent_draws jsonb
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_title text := nullif(trim(p_title), '');
+  v_slug text;
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  if v_title is null then
+    raise exception 'Title is required.';
+  end if;
+
+  select e.slug
+  into v_slug
+  from public.raffle_events e
+  where lower(trim(e.title)) = lower(v_title)
+  order by e.created_at desc
+  limit 1;
+
+  if not found then
+    raise exception 'Raffle event not found.';
+  end if;
+
+  return query
+  select *
+  from public.get_raffle_event_admin(v_slug, p_app_admin_pin);
+end;
+$$;
+
 create or replace function public.draw_raffle_prize(
   p_slug text,
   p_admin_pin text,
@@ -866,7 +980,7 @@ create or replace function public.draw_raffle_prize(
 returns table(
   draw_id uuid,
   member_no text,
-  display_name text,
+  role_name text,
   prize_name text,
   slot_number integer,
   random_token text
@@ -1115,6 +1229,7 @@ revoke execute on function public.member_label(public.rooc_members) from public,
 revoke execute on function public.assert_app_admin(text) from public, anon, authenticated;
 revoke execute on function public.validate_event_admin(text, text) from public, anon, authenticated;
 revoke execute on function public.initialize_app_admin(text) from public;
+revoke execute on function public.change_app_admin_pin(text, text) from public;
 revoke execute on function public.get_rooc_occupations(text, boolean) from public;
 revoke execute on function public.upsert_rooc_occupation(text, text, text, boolean) from public;
 revoke execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) from public;
@@ -1124,11 +1239,13 @@ revoke execute on function public.create_raffle_event(text, text, text, text) fr
 revoke execute on function public.set_raffle_event_status(text, text, text) from public;
 revoke execute on function public.add_raffle_prize(text, text, text, text, integer) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
+revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
 revoke execute on function public.draw_raffle_prize(text, text, uuid) from public;
 revoke execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) from public;
 
 grant usage on schema public to anon, authenticated;
 grant execute on function public.initialize_app_admin(text) to anon, authenticated;
+grant execute on function public.change_app_admin_pin(text, text) to anon, authenticated;
 grant execute on function public.get_rooc_occupations(text, boolean) to anon, authenticated;
 grant execute on function public.upsert_rooc_occupation(text, text, text, boolean) to anon, authenticated;
 grant execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) to anon, authenticated;
@@ -1138,6 +1255,7 @@ grant execute on function public.create_raffle_event(text, text, text, text) to 
 grant execute on function public.set_raffle_event_status(text, text, text) to anon, authenticated;
 grant execute on function public.add_raffle_prize(text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
+grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;
 grant execute on function public.draw_raffle_prize(text, text, uuid) to anon, authenticated;
 grant execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) to anon, authenticated;
 

@@ -5,10 +5,10 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 ## 核心規則
 
 - 參加者來自 Supabase 的 `rooc_members` 會員表。
-- 成員可啟用/停用；停用成員不會進入可抽名單。
+- 成員可標記為公會中/已退會；已退會成員不會進入可抽名單。
 - 每場抽獎活動中，同一人只能被處理一次。
 - 已確認得獎、放棄重抽、原抽中後轉讓、被指定轉讓的人，都會進入該場活動的排除名單。
-- 被指定轉讓的人必須是啟用中且尚未被排除的會員。
+- 被指定轉讓的人必須是公會中且尚未被排除的會員。
 - 獎項可有多個名額。
 - 抽獎過程中可以隨時新增獎項，用於現場加碼。
 - 系統保留中獎名單、抽獎時間、抽獎批次、抽獎 token、轉讓/放棄紀錄，並可匯出 CSV。
@@ -27,20 +27,19 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 
 - `rooc_members`：會員池
   - `member_no`：編號
-  - `display_name`：顯示名稱
+  - `role_name`：角色名稱，必填
   - `occupation`：職業
-  - `role_id`：角色 ID
   - `joined_dc`：是否加入 DC
-  - `is_active`：是否啟用
+  - `is_active`：公會狀態，true 代表公會中，false 代表已退會
 - `rooc_occupations`：職業選項
   - 職業可新增、改名、啟用、停用
   - 改名職業會同步更新既有成員的職業
   - 停用職業不會出現在成員表單下拉選單
-- `raffle_events`：抽獎活動
+- `raffle_events`：抽獎活動，活動名稱不可重複
 - `raffle_prizes`：獎項與提供者
 - `raffle_draws`：每一次抽出與處理結果
 - `raffle_exclusions`：每場活動的排除名單
-- `raffle_app_config`：成員管理 PIN
+- `raffle_app_config`：成員管理 PIN hash
 
 所有前端操作都透過 RPC 執行。資料表已啟用 RLS 並撤銷 anon/authenticated 的直接表格存取。
 
@@ -51,7 +50,9 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 1. 由 Codex 使用 Supabase connector 執行 migration。
 2. 手動到 Supabase SQL Editor 執行 `supabase/schema.sql`。
 
-第一次使用「成員」頁時，輸入一組成員管理 PIN。若尚未初始化，系統會建立；若已初始化，則會驗證該 PIN。
+第一次執行需要管理權限的操作時，系統會要求輸入成員管理 PIN。若尚未初始化，系統會建立；若已初始化，則會驗證該 PIN。
+
+成員管理 PIN 以 hash 存在資料庫，不會以明碼保存。前端只會把已驗證的 PIN 暫存在同一分頁的 `sessionStorage`，重整頁面後可沿用，關閉分頁後會清除。成員管理 PIN 可在「成員」頁右上角的「修改 PIN」更新。
 
 ## 設定方式
 
@@ -89,11 +90,11 @@ php scripts/write-config.php
 
 ## 現場流程
 
-1. 到「成員」建立或登入成員管理 PIN。
-2. 在「職業管理」新增或修改職業。
-3. 新增/更新會員，或停用不參加的人。
-4. 到「活動/獎項」建立抽獎活動。
-5. 到「抽獎控制台」載入活動。
+1. 到「成員」進行成員或職業操作時，輸入成員管理 PIN。
+2. 在成員表單按「管理職業」，新增或修改職業。
+3. 新增/更新會員，或將已退會的人標記為退會。
+4. 到「活動/獎項」用活動名稱建立抽獎活動。
+5. 到「抽獎控制台」用活動名稱載入活動。
 6. 新增第一批獎項；現場加碼時可再新增。
 7. 選擇獎項後按「抽出」。
 8. 對抽出結果選擇：
