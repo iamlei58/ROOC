@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="ROOC raffle mark">
+  <defs>
+    <linearGradient id="a" x1="20" x2="100" y1="12" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4B942"/>
+      <stop offset="0.55" stop-color="#D95D39"/>
+      <stop offset="1" stop-color="#087F8C"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="24" fill="#10242D"/>
+  <path d="M25 39c0-7 6-13 13-13h44c7 0 13 6 13 13v42c0 7-6 13-13 13H38c-7 0-13-6-13-13V39Z" fill="url(#a)"/>
+  <path d="M38 43h44M38 59h44M38 75h28" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="83" cy="75" r="11" fill="#fff"/>
+  <path d="M82 69v12M76 75h12" stroke="#10242D" stroke-width="5" stroke-linecap="round"/>
+</svg>

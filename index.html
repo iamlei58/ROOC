@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ROOC 抽獎系統</title>
+    <link rel="icon" href="assets/raffle-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div class="brand">
+          <img class="brand-mark" src="assets/raffle-mark.svg" alt="">
+          <div>
+            <p class="eyebrow">Supabase + GitHub Pages</p>
+            <h1>ROOC 抽獎系統</h1>
+          </div>
+        </div>
+        <div class="connection-pill" id="connection-pill">
+          <span class="dot"></span>
+          <span id="connection-text">尚未連線</span>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="主要功能">
+        <button class="tab is-active" type="button" data-tab="join">
+          <i data-lucide="ticket"></i>
+          <span>參加抽獎</span>
+        </button>
+        <button class="tab" type="button" data-tab="admin">
+          <i data-lucide="settings-2"></i>
+          <span>建立/管理</span>
+        </button>
+        <button class="tab" type="button" data-tab="settings">
+          <i data-lucide="database"></i>
+          <span>設定</span>
+        </button>
+      </nav>
+
+      <section class="toast" id="toast" hidden></section>
+
+      <section class="workspace">
+        <section class="panel tab-panel is-active" id="panel-join" data-panel="join">
+          <div class="panel-head">
+            <div>
+              <p class="section-label">Public</p>
+              <h2>參加抽獎</h2>
+            </div>
+            <span class="status-badge" id="public-status">等待查詢</span>
+          </div>
+
+          <form class="toolbar-form" id="lookup-form">
+            <label>
+              <span>抽獎代碼</span>
+              <input name="slug" id="lookup-slug" autocomplete="off" placeholder="summer-gift">
+            </label>
+            <button class="btn primary" type="submit">
+              <i data-lucide="search"></i>
+              <span>查詢</span>
+            </button>
+          </form>
+
+          <div class="empty-state" id="public-empty">
+            <img src="assets/raffle-mark.svg" alt="">
+            <p>尚未載入抽獎。</p>
+          </div>
+
+          <div class="detail-grid" id="public-detail" hidden>
+            <section class="info-block">
+              <div class="block-head">
+                <div>
+                  <p class="section-label">Raffle</p>
+                  <h3 id="public-title"></h3>
+                </div>
+                <span class="status-badge" id="public-detail-status"></span>
+              </div>
+              <p class="description" id="public-description"></p>
+              <dl class="stats">
+                <div>
+                  <dt>參加人數</dt>
+                  <dd id="public-count">0</dd>
+                </div>
+                <div>
+                  <dt>名額</dt>
+                  <dd id="public-winners-count">1</dd>
+                </div>
+                <div>
+                  <dt>開獎時間</dt>
+                  <dd id="public-drawn-at">尚未開獎</dd>
+                </div>
+              </dl>
+              <div class="winner-strip" id="public-winners" hidden></div>
+            </section>
+
+            <form class="info-block form-stack" id="join-form">
+              <div class="block-head compact">
+                <div>
+                  <p class="section-label">Entry</p>
+                  <h3>報名資料</h3>
+                </div>
+              </div>
+              <label>
+                <span>姓名</span>
+                <input name="display_name" autocomplete="name" required maxlength="80">
+              </label>
+              <label>
+                <span>Email</span>
+                <input name="email" type="email" autocomplete="email" maxlength="160">
+              </label>
+              <label>
+                <span>備註</span>
+                <textarea name="note" rows="3" maxlength="240"></textarea>
+              </label>
+              <button class="btn primary full" type="submit">
+                <i data-lucide="send"></i>
+                <span>送出報名</span>
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel tab-panel" id="panel-admin" data-panel="admin" hidden>
+          <div class="panel-head">
+            <div>
+              <p class="section-label">Admin</p>
+              <h2>建立/管理</h2>
+            </div>
+            <span class="status-badge" id="admin-status">未載入</span>
+          </div>
+
+          <div class="split-layout">
+            <form class="info-block form-stack" id="create-form">
+              <div class="block-head compact">
+                <div>
+                  <p class="section-label">Create</p>
+                  <h3>建立抽獎</h3>
+                </div>
+              </div>
+              <label>
+                <span>活動名稱</span>
+                <input name="title" required maxlength="120" placeholder="夏季會員禮">
+              </label>
+              <label>
+                <span>抽獎代碼</span>
+                <input name="slug" autocomplete="off" maxlength="80" placeholder="summer-gift">
+              </label>
+              <label>
+                <span>活動說明</span>
+                <textarea name="description" rows="4" maxlength="1200"></textarea>
+              </label>
+              <div class="field-row">
+                <label>
+                  <span>中獎名額</span>
+                  <input name="winners_count" type="number" min="1" max="100" value="1" required>
+                </label>
+                <label>
+                  <span>管理 PIN</span>
+                  <input name="admin_pin" type="password" minlength="4" maxlength="80" required>
+                </label>
+              </div>
+              <div class="field-row">
+                <label>
+                  <span>開始時間</span>
+                  <input name="starts_at" type="datetime-local">
+                </label>
+                <label>
+                  <span>結束時間</span>
+                  <input name="ends_at" type="datetime-local">
+                </label>
+              </div>
+              <button class="btn primary full" type="submit">
+                <i data-lucide="plus"></i>
+                <span>建立</span>
+              </button>
+            </form>
+
+            <section class="info-block form-stack">
+              <div class="block-head compact">
+                <div>
+                  <p class="section-label">Manage</p>
+                  <h3>管理抽獎</h3>
+                </div>
+              </div>
+              <form class="form-stack" id="manage-form">
+                <label>
+                  <span>抽獎代碼</span>
+                  <input name="slug" id="manage-slug" autocomplete="off" required>
+                </label>
+                <label>
+                  <span>管理 PIN</span>
+                  <input name="admin_pin" id="manage-pin" type="password" required>
+                </label>
+                <button class="btn secondary full" type="submit">
+                  <i data-lucide="lock-keyhole"></i>
+                  <span>載入</span>
+                </button>
+              </form>
+
+              <div class="admin-detail" id="admin-detail" hidden>
+                <div class="admin-title-row">
+                  <div>
+                    <p class="section-label">Current</p>
+                    <h3 id="admin-title"></h3>
+                  </div>
+                  <span class="status-badge" id="admin-detail-status"></span>
+                </div>
+                <dl class="stats compact-stats">
+                  <div>
+                    <dt>參加人數</dt>
+                    <dd id="admin-count">0</dd>
+                  </div>
+                  <div>
+                    <dt>名額</dt>
+                    <dd id="admin-winners-count">1</dd>
+                  </div>
+                  <div>
+                    <dt>開獎</dt>
+                    <dd id="admin-drawn-at">未開獎</dd>
+                  </div>
+                </dl>
+                <div class="button-row">
+                  <button class="btn secondary" type="button" id="open-raffle">
+                    <i data-lucide="unlock"></i>
+                    <span>開放</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="close-raffle">
+                    <i data-lucide="lock"></i>
+                    <span>關閉</span>
+                  </button>
+                  <button class="btn accent" type="button" id="draw-raffle">
+                    <i data-lucide="sparkles"></i>
+                    <span>開獎</span>
+                  </button>
+                </div>
+                <div class="share-box">
+                  <input id="share-link" readonly>
+                  <button class="btn icon-only" type="button" id="copy-link" aria-label="複製連結">
+                    <i data-lucide="copy"></i>
+                  </button>
+                </div>
+                <div class="winner-strip" id="admin-winners" hidden></div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>姓名</th>
+                        <th>Email</th>
+                        <th>備註</th>
+                        <th>時間</th>
+                      </tr>
+                    </thead>
+                    <tbody id="participant-table"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel tab-panel" id="panel-settings" data-panel="settings" hidden>
+          <div class="panel-head">
+            <div>
+              <p class="section-label">Settings</p>
+              <h2>Supabase 設定</h2>
+            </div>
+            <span class="status-badge" id="settings-status">未設定</span>
+          </div>
+
+          <form class="info-block form-stack" id="settings-form">
+            <label>
+              <span>Project URL</span>
+              <input name="supabase_url" id="supabase-url" type="url" placeholder="https://project.supabase.co" required>
+            </label>
+            <label>
+              <span>Anon key</span>
+              <textarea name="supabase_anon_key" id="supabase-anon-key" rows="4" required></textarea>
+            </label>
+            <div class="button-row">
+              <button class="btn primary" type="submit">
+                <i data-lucide="save"></i>
+                <span>儲存</span>
+              </button>
+              <button class="btn secondary" type="button" id="clear-settings">
+                <i data-lucide="trash-2"></i>
+                <span>清除</span>
+              </button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
