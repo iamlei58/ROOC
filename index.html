@@ -32,6 +32,10 @@
             <span class="dot"></span>
             <span id="connection-text">尚未連線</span>
           </div>
+          <a class="btn secondary hero-public" href="public.html">
+            <i data-lucide="shield-check"></i>
+            <span>公開驗證</span>
+          </a>
           <button class="btn secondary hero-password" type="button" id="change-admin-pin" hidden>
             <i data-lucide="key-round"></i>
             <span>修改密碼</span>
@@ -165,6 +169,13 @@
                     <span>抽出</span>
                   </button>
                 </div>
+                <div class="draw-odds-card" id="draw-odds-card" hidden>
+                  <div>
+                    <span>本輪機率</span>
+                    <strong id="draw-odds-probability">-</strong>
+                  </div>
+                  <p id="draw-odds-formula"></p>
+                </div>
                 <div class="pending-card" id="pending-card" hidden>
                   <div class="block-head compact">
                     <div>
@@ -232,8 +243,11 @@
                     <thead>
                       <tr>
                         <th>獎項</th>
+                        <th>提供者</th>
                         <th>抽中</th>
                         <th>結果</th>
+                        <th>機率</th>
+                        <th>驗證</th>
                       </tr>
                     </thead>
                     <tbody id="draw-log-table"></tbody>
@@ -478,8 +492,11 @@
                   <thead>
                     <tr>
                       <th>獎項</th>
+                      <th>提供者</th>
                       <th>抽中</th>
                       <th>結果</th>
+                      <th>機率</th>
+                      <th>驗證</th>
                     </tr>
                   </thead>
                   <tbody id="history-draw-log-table"></tbody>

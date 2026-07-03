@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ROOC 星辰公開驗證</title>
+    <link rel="icon" href="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script defer src="public.js"></script>
+  </head>
+  <body>
+    <main class="app-shell public-shell">
+      <header class="hero public-hero">
+        <div class="brand">
+          <img class="brand-mark" src="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" alt="">
+          <div>
+            <p class="eyebrow">Ragnarok Origin Classic</p>
+            <h1>公開驗證</h1>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <div class="connection-pill" id="connection-pill">
+            <span class="dot"></span>
+            <span id="connection-text">尚未連線</span>
+          </div>
+          <a class="btn secondary hero-public" href="index.html">
+            <i data-lucide="lock-keyhole"></i>
+            <span>管理後台</span>
+          </a>
+        </div>
+      </header>
+
+      <section class="toast-stack" id="toast-stack" aria-live="polite" aria-label="系統提示"></section>
+
+      <section class="panel public-panel">
+        <div class="panel-head">
+          <div>
+            <p class="section-label">Fairness</p>
+            <h2>抽獎歷史與公平驗證</h2>
+          </div>
+          <span class="status-badge" id="public-status">未載入</span>
+        </div>
+
+        <form class="toolbar-form compact-toolbar" id="public-event-form">
+          <label>
+            <span>公開活動</span>
+            <select name="slug" id="public-event-select">
+              <option value="">選擇活動</option>
+            </select>
+          </label>
+          <button class="btn primary" type="submit">
+            <i data-lucide="search"></i>
+            <span>查看</span>
+          </button>
+          <button class="btn secondary" type="button" id="refresh-public-events">
+            <i data-lucide="refresh-cw"></i>
+            <span>刷新</span>
+          </button>
+        </form>
+
+        <div class="empty-state" id="public-empty">
+          <img src="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" alt="">
+          <p>選擇活動後查看公開中獎紀錄與抽獎驗證。</p>
+        </div>
+
+        <div class="public-detail" id="public-detail" hidden>
+          <section class="info-block public-summary">
+            <div class="block-head">
+              <div>
+                <p class="section-label">活動</p>
+                <h3 id="public-title">尚未載入</h3>
+              </div>
+              <span class="status-badge" id="public-event-status-badge">未載入</span>
+            </div>
+            <p class="description" id="public-event-meta"></p>
+            <div class="public-live-banner" id="public-live-banner" hidden>
+              <i data-lucide="radio"></i>
+              <div>
+                <strong id="public-live-title">抽獎同步中</strong>
+                <p id="public-live-text"></p>
+              </div>
+            </div>
+            <div class="fairness-note">
+              <strong>公開驗證邏輯</strong>
+              <p>每次抽獎會保存當下可抽名單、排除人數、獎項提供者排除狀態、隨機 seed、名單 Hash 與結果 Hash。驗證時會重新計算 SHA-256，確認中獎者位置與紀錄一致。</p>
+            </div>
+          </section>
+
+          <section class="stats-grid">
+            <div>
+              <dt>獎項數</dt>
+              <dd id="public-stat-prizes">0</dd>
+            </div>
+            <div>
+              <dt>中獎紀錄</dt>
+              <dd id="public-stat-awards">0</dd>
+            </div>
+            <div>
+              <dt>抽獎紀錄</dt>
+              <dd id="public-stat-draws">0</dd>
+            </div>
+            <div>
+              <dt>驗證快照</dt>
+              <dd id="public-stat-audits">0</dd>
+            </div>
+          </section>
+
+          <section class="table-card">
+            <div class="table-head">
+              <h3>獎項紀錄</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>獎項</th>
+                    <th>提供者</th>
+                    <th>名額</th>
+                    <th>已完成</th>
+                    <th>剩餘</th>
+                  </tr>
+                </thead>
+                <tbody id="public-prize-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="table-card">
+            <div class="table-head">
+              <h3>中獎名單</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>獎項</th>
+                    <th>提供者</th>
+                    <th>原抽中者</th>
+                    <th>領獎者</th>
+                    <th>狀態</th>
+                    <th>時間</th>
+                  </tr>
+                </thead>
+                <tbody id="public-award-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="table-card">
+            <div class="table-head">
+              <h3>抽獎驗證紀錄</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>獎項</th>
+                    <th>提供者</th>
+                    <th>抽中</th>
+                    <th>結果</th>
+                    <th>機率</th>
+                    <th>驗證</th>
+                  </tr>
+                </thead>
+                <tbody id="public-draw-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <dialog class="modal audit-modal" id="audit-dialog">
+        <div class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="section-label">Verify</p>
+              <h3 id="audit-title">抽獎驗證</h3>
+            </div>
+            <button class="btn icon-button" type="button" id="close-audit-dialog" aria-label="關閉驗證視窗">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="audit-content" id="audit-content"></div>
+        </div>
+      </dialog>
+
+      <dialog class="modal draw-animation-modal public-live-modal" id="public-live-dialog">
+        <div class="modal-shell draw-animation-shell">
+          <button class="btn icon-button draw-animation-close" type="button" id="close-public-live" aria-label="關閉直播抽獎">
+            <i data-lucide="x"></i>
+          </button>
+          <div class="draw-animation-stage public-live-stage" aria-live="polite">
+            <div class="draw-portal" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="draw-lightbar" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <p class="section-label" id="public-live-phase">抽獎同步中</p>
+            <h3 id="public-live-prize">等待抽獎</h3>
+            <div class="draw-roller" id="public-live-roller">ROOC</div>
+            <div class="draw-result-list" id="public-live-results"></div>
+            <div class="draw-progress" aria-hidden="true"><span></span></div>
+          </div>
+        </div>
+      </dialog>
+    </main>
+  </body>
+</html>

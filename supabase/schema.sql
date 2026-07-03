@@ -118,6 +118,53 @@ create table if not exists public.raffle_exclusions (
   unique (event_id, member_id)
 );
 
+create table if not exists public.raffle_draw_audits (
+  id uuid primary key default extensions.gen_random_uuid(),
+  event_id uuid not null references public.raffle_events(id) on delete cascade,
+  prize_id uuid not null references public.raffle_prizes(id) on delete cascade,
+  draw_id uuid not null unique references public.raffle_draws(id) on delete cascade,
+  round_id uuid not null,
+  round_draw_count integer not null check (round_draw_count between 1 and 50),
+  round_index integer not null check (round_index > 0),
+  active_member_count integer not null check (active_member_count >= 0),
+  excluded_count_before integer not null check (excluded_count_before >= 0),
+  provider_member_id uuid references public.rooc_members(id),
+  provider_excluded boolean not null default false,
+  eligible_count integer not null check (eligible_count > 0),
+  step_probability numeric(14, 10) not null,
+  round_probability numeric(14, 10) not null,
+  prize_remaining_before integer not null check (prize_remaining_before > 0),
+  random_seed text not null,
+  eligible_members jsonb not null,
+  eligible_manifest text not null,
+  eligible_manifest_hash text not null,
+  selector_hash text not null,
+  selected_index integer not null check (selected_index > 0),
+  algorithm text not null default 'rooc-sha256-index-v1',
+  created_at timestamptz not null default now(),
+  check (char_length(random_seed) between 32 and 128),
+  check (char_length(eligible_manifest_hash) = 64),
+  check (char_length(selector_hash) = 64)
+);
+
+create table if not exists public.raffle_live_draws (
+  id uuid primary key default extensions.gen_random_uuid(),
+  event_id uuid not null unique references public.raffle_events(id) on delete cascade,
+  prize_id uuid references public.raffle_prizes(id) on delete set null,
+  prize_name text not null,
+  provider text not null,
+  draw_count integer not null check (draw_count between 1 and 50),
+  status text not null default 'drawing' check (status in ('drawing', 'completed', 'failed')),
+  result_draw_ids uuid[] not null default '{}',
+  error_message text,
+  started_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  check (char_length(prize_name) between 1 and 120),
+  check (char_length(provider) between 1 and 220),
+  check (error_message is null or char_length(error_message) <= 500)
+);
+
 create index if not exists raffle_prizes_event_order_idx
   on public.raffle_prizes (event_id, sort_order, created_at);
 
@@ -131,6 +178,15 @@ create index if not exists raffle_draws_event_created_idx
 create index if not exists raffle_exclusions_event_member_idx
   on public.raffle_exclusions (event_id, member_id);
 
+create index if not exists raffle_draw_audits_event_created_idx
+  on public.raffle_draw_audits (event_id, created_at desc);
+
+create index if not exists raffle_draw_audits_round_idx
+  on public.raffle_draw_audits (round_id, round_index);
+
+create index if not exists raffle_live_draws_event_status_idx
+  on public.raffle_live_draws (event_id, status, updated_at desc);
+
 alter table public.raffle_app_config enable row level security;
 alter table public.rooc_members enable row level security;
 alter table public.rooc_occupations enable row level security;
@@ -138,6 +194,8 @@ alter table public.raffle_events enable row level security;
 alter table public.raffle_prizes enable row level security;
 alter table public.raffle_draws enable row level security;
 alter table public.raffle_exclusions enable row level security;
+alter table public.raffle_draw_audits enable row level security;
+alter table public.raffle_live_draws enable row level security;
 
 create or replace function public.slugify(input text)
 returns text
@@ -155,6 +213,40 @@ stable
 set search_path = public, pg_temp
 as $$
   select p_member.role_name;
+$$;
+
+create or replace function public.hex_prefix_to_bigint(
+  p_hex text,
+  p_chars integer default 12
+)
+returns bigint
+language plpgsql
+immutable
+set search_path = public, pg_temp
+as $$
+declare
+  v_clean text := lower(regexp_replace(coalesce(p_hex, ''), '[^0-9a-f]', '', 'g'));
+  v_length integer := least(greatest(coalesce(p_chars, 12), 0), length(v_clean));
+  v_result numeric := 0;
+  v_char text;
+  v_digit integer;
+  v_pos integer;
+begin
+  if v_length <= 0 then
+    return 0;
+  end if;
+
+  for v_pos in 1..v_length loop
+    v_char := substr(v_clean, v_pos, 1);
+    v_digit := position(v_char in '0123456789abcdef') - 1;
+    if v_digit < 0 then
+      v_digit := 0;
+    end if;
+    v_result := v_result * 16 + v_digit;
+  end loop;
+
+  return v_result::bigint;
+end;
 $$;
 
 create or replace function public.assert_app_admin(p_admin_pin text)
@@ -1076,6 +1168,7 @@ begin
             'provider_member_id', prize_rows.provider_member_id,
             'quantity', prize_rows.quantity,
             'eligible_count', prize_rows.eligible_count,
+            'provider_excluded', prize_rows.provider_excluded,
             'draw_count', prize_rows.draw_count,
             'filled_count', prize_rows.filled_count,
             'pending_count', prize_rows.pending_count,
@@ -1105,6 +1198,18 @@ begin
                     and x.member_id = m.id
                 )
             ) as eligible_count,
+            exists (
+              select 1
+              from public.rooc_members pm
+              where pm.id = p.provider_member_id
+                and pm.is_active
+                and not exists (
+                  select 1
+                  from public.raffle_exclusions x
+                  where x.event_id = v_event.id
+                    and x.member_id = pm.id
+                )
+            ) as provider_excluded,
             (
               select count(*)::integer
               from public.raffle_draws d
@@ -1219,7 +1324,9 @@ begin
         select jsonb_agg(
           jsonb_build_object(
             'id', log_rows.id,
+            'prize_id', log_rows.prize_id,
             'prize_name', log_rows.prize_name,
+            'provider', log_rows.provider,
             'slot_number', log_rows.slot_number,
             'drawn_member_no', log_rows.drawn_member_no,
             'drawn_role_name', log_rows.drawn_role_name,
@@ -1227,6 +1334,11 @@ begin
             'final_role_name', log_rows.final_role_name,
             'status', log_rows.status,
             'random_token', log_rows.random_token,
+            'eligible_count', log_rows.eligible_count,
+            'step_probability', log_rows.step_probability,
+            'round_probability', log_rows.round_probability,
+            'selected_index', log_rows.selected_index,
+            'eligible_manifest_hash', log_rows.eligible_manifest_hash,
             'created_at', log_rows.created_at,
             'resolved_at', log_rows.resolved_at
           )
@@ -1235,7 +1347,9 @@ begin
         from (
           select
             d.id,
+            d.prize_id,
             p.name as prize_name,
+            p.provider,
             d.slot_number,
             dm.member_no as drawn_member_no,
             public.member_label(dm) as drawn_role_name,
@@ -1243,12 +1357,18 @@ begin
             case when fm.id is null then null else public.member_label(fm) end as final_role_name,
             d.status,
             d.random_token,
+            a.eligible_count,
+            a.step_probability,
+            a.round_probability,
+            a.selected_index,
+            a.eligible_manifest_hash,
             d.created_at,
             d.resolved_at
           from public.raffle_draws d
           join public.raffle_prizes p on p.id = d.prize_id
           join public.rooc_members dm on dm.id = d.drawn_member_id
           left join public.rooc_members fm on fm.id = d.final_member_id
+          left join public.raffle_draw_audits a on a.draw_id = d.id
           where d.event_id = v_event.id
           order by d.created_at desc
           limit 100
@@ -1308,6 +1428,536 @@ begin
   return query
   select *
   from public.get_raffle_event_admin(v_slug, p_app_admin_pin);
+end;
+$$;
+
+create or replace function public.list_public_raffle_events()
+returns table(
+  slug text,
+  title text,
+  status text,
+  created_at timestamptz,
+  closed_at timestamptz,
+  prize_count bigint,
+  draw_count bigint,
+  award_count bigint,
+  last_draw_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  return query
+  select
+    e.slug,
+    e.title,
+    e.status,
+    e.created_at,
+    e.closed_at,
+    count(distinct p.id) as prize_count,
+    count(distinct d.id) as draw_count,
+    count(distinct d.id) filter (where d.status in ('accepted', 'transferred')) as award_count,
+    coalesce(greatest(max(d.created_at), max(l.updated_at)), max(d.created_at), max(l.updated_at)) as last_draw_at
+  from public.raffle_events e
+  left join public.raffle_prizes p on p.event_id = e.id
+  left join public.raffle_draws d on d.event_id = e.id
+  left join public.raffle_live_draws l on l.event_id = e.id
+  where e.status = 'live'
+    or exists (
+    select 1
+    from public.raffle_draws existing_draws
+    where existing_draws.event_id = e.id
+  )
+    or e.status = 'closed'
+  group by e.id
+  order by coalesce(greatest(max(d.created_at), max(l.updated_at)), e.closed_at, e.created_at) desc;
+end;
+$$;
+
+create or replace function public.get_public_raffle_event(
+  p_slug text
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  description text,
+  status text,
+  created_at timestamptz,
+  closed_at timestamptz,
+  prize_count bigint,
+  draw_count bigint,
+  award_count bigint,
+  prizes jsonb,
+  awards jsonb,
+  draws jsonb
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_slug text := nullif(trim(p_slug), '');
+  v_event public.raffle_events%rowtype;
+begin
+  if v_slug is null then
+    raise exception '請選擇活動。';
+  end if;
+
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.slug = v_slug;
+
+  if not found then
+    raise exception '找不到活動。';
+  end if;
+
+  return query
+  select
+    v_event.id,
+    v_event.slug,
+    v_event.title,
+    v_event.description,
+    v_event.status,
+    v_event.created_at,
+    v_event.closed_at,
+    (select count(*) from public.raffle_prizes p where p.event_id = v_event.id) as prize_count,
+    (select count(*) from public.raffle_draws d where d.event_id = v_event.id) as draw_count,
+    (
+      select count(*)
+      from public.raffle_draws d
+      where d.event_id = v_event.id
+        and d.status in ('accepted', 'transferred')
+    ) as award_count,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', prize_rows.id,
+            'name', prize_rows.name,
+            'provider', prize_rows.provider,
+            'quantity', prize_rows.quantity,
+            'draw_count', prize_rows.draw_count,
+            'filled_count', prize_rows.filled_count,
+            'pending_count', prize_rows.pending_count,
+            'remaining_count', greatest(prize_rows.quantity - prize_rows.filled_count - prize_rows.pending_count, 0)
+          )
+          order by prize_rows.sort_order, prize_rows.created_at
+        )
+        from (
+          select
+            p.id,
+            p.name,
+            p.provider,
+            p.quantity,
+            p.sort_order,
+            p.created_at,
+            (
+              select count(*)::integer
+              from public.raffle_draws d
+              where d.prize_id = p.id
+            ) as draw_count,
+            (
+              select count(*)::integer
+              from public.raffle_draws d
+              where d.prize_id = p.id
+                and d.status in ('accepted', 'transferred')
+            ) as filled_count,
+            (
+              select count(*)::integer
+              from public.raffle_draws d
+              where d.prize_id = p.id
+                and d.status = 'pending'
+            ) as pending_count
+          from public.raffle_prizes p
+          where p.event_id = v_event.id
+            and p.is_active
+        ) as prize_rows
+      ),
+      '[]'::jsonb
+    ) as prizes,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', award_rows.id,
+            'prize_name', award_rows.prize_name,
+            'provider', award_rows.provider,
+            'slot_number', award_rows.slot_number,
+            'drawn_member_no', award_rows.drawn_member_no,
+            'drawn_role_name', award_rows.drawn_role_name,
+            'final_member_no', award_rows.final_member_no,
+            'final_role_name', award_rows.final_role_name,
+            'status', award_rows.status,
+            'resolved_at', award_rows.resolved_at
+          )
+          order by award_rows.resolved_at desc
+        )
+        from (
+          select
+            d.id,
+            p.name as prize_name,
+            p.provider,
+            d.slot_number,
+            dm.member_no as drawn_member_no,
+            public.member_label(dm) as drawn_role_name,
+            fm.member_no as final_member_no,
+            public.member_label(fm) as final_role_name,
+            d.status,
+            d.resolved_at
+          from public.raffle_draws d
+          join public.raffle_prizes p on p.id = d.prize_id
+          join public.rooc_members dm on dm.id = d.drawn_member_id
+          join public.rooc_members fm on fm.id = d.final_member_id
+          where d.event_id = v_event.id
+            and d.status in ('accepted', 'transferred')
+          order by d.resolved_at desc
+        ) as award_rows
+      ),
+      '[]'::jsonb
+    ) as awards,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', draw_rows.id,
+            'event_id', v_event.id,
+            'prize_id', draw_rows.prize_id,
+            'prize_name', draw_rows.prize_name,
+            'provider', draw_rows.provider,
+            'slot_number', draw_rows.slot_number,
+            'drawn_member_no', draw_rows.drawn_member_no,
+            'drawn_role_name', draw_rows.drawn_role_name,
+            'final_member_no', draw_rows.final_member_no,
+            'final_role_name', draw_rows.final_role_name,
+            'status', draw_rows.status,
+            'created_at', draw_rows.created_at,
+            'resolved_at', draw_rows.resolved_at,
+            'audit', case
+              when draw_rows.audit_id is null then null
+              else jsonb_build_object(
+                'id', draw_rows.audit_id,
+                'algorithm', draw_rows.algorithm,
+                'round_id', draw_rows.round_id,
+                'round_draw_count', draw_rows.round_draw_count,
+                'round_index', draw_rows.round_index,
+                'active_member_count', draw_rows.active_member_count,
+                'excluded_count_before', draw_rows.excluded_count_before,
+                'provider_excluded', draw_rows.provider_excluded,
+                'eligible_count', draw_rows.eligible_count,
+                'step_probability', draw_rows.step_probability,
+                'round_probability', draw_rows.round_probability,
+                'prize_remaining_before', draw_rows.prize_remaining_before,
+                'random_seed', draw_rows.random_seed,
+                'eligible_manifest', draw_rows.eligible_manifest,
+                'eligible_manifest_hash', draw_rows.eligible_manifest_hash,
+                'selector_hash', draw_rows.selector_hash,
+                'selected_index', draw_rows.selected_index,
+                'eligible_members', coalesce(
+                  (
+                    select jsonb_agg(
+                      jsonb_build_object(
+                        'position', eligible.ordinality,
+                        'member_no', eligible.item ->> 'member_no',
+                        'role_name', eligible.item ->> 'role_name',
+                        'occupation', eligible.item ->> 'occupation',
+                        'joined_dc', (eligible.item ->> 'joined_dc')::boolean
+                      )
+                      order by eligible.ordinality
+                    )
+                    from jsonb_array_elements(draw_rows.eligible_members) with ordinality as eligible(item, ordinality)
+                  ),
+                  '[]'::jsonb
+                )
+              )
+            end
+          )
+          order by draw_rows.created_at desc
+        )
+        from (
+          select
+            d.id,
+            d.prize_id,
+            p.name as prize_name,
+            p.provider,
+            d.slot_number,
+            dm.member_no as drawn_member_no,
+            public.member_label(dm) as drawn_role_name,
+            fm.member_no as final_member_no,
+            case when fm.id is null then null else public.member_label(fm) end as final_role_name,
+            d.status,
+            d.created_at,
+            d.resolved_at,
+            a.id as audit_id,
+            a.algorithm,
+            a.round_id,
+            a.round_draw_count,
+            a.round_index,
+            a.active_member_count,
+            a.excluded_count_before,
+            a.provider_excluded,
+            a.eligible_count,
+            a.step_probability,
+            a.round_probability,
+            a.prize_remaining_before,
+            a.random_seed,
+            a.eligible_members,
+            a.eligible_manifest,
+            a.eligible_manifest_hash,
+            a.selector_hash,
+            a.selected_index
+          from public.raffle_draws d
+          join public.raffle_prizes p on p.id = d.prize_id
+          join public.rooc_members dm on dm.id = d.drawn_member_id
+          left join public.rooc_members fm on fm.id = d.final_member_id
+          left join public.raffle_draw_audits a on a.draw_id = d.id
+          where d.event_id = v_event.id
+          order by d.created_at desc
+        ) as draw_rows
+      ),
+      '[]'::jsonb
+    ) as draws;
+end;
+$$;
+
+create or replace function public.get_public_raffle_live_draw(
+  p_slug text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_slug text := nullif(trim(p_slug), '');
+  v_event_id uuid;
+begin
+  if v_slug is null then
+    raise exception '請選擇活動。';
+  end if;
+
+  select e.id
+  into v_event_id
+  from public.raffle_events e
+  where e.slug = v_slug;
+
+  if not found then
+    raise exception '找不到活動。';
+  end if;
+
+  return (
+    select jsonb_build_object(
+      'id', l.id,
+      'event_id', l.event_id,
+      'prize_id', l.prize_id,
+      'prize_name', l.prize_name,
+      'provider', l.provider,
+      'draw_count', l.draw_count,
+      'status', l.status,
+      'result_draw_ids', l.result_draw_ids,
+      'error_message', l.error_message,
+      'started_at', l.started_at,
+      'updated_at', l.updated_at,
+      'completed_at', l.completed_at
+    )
+    from public.raffle_live_draws l
+    where l.event_id = v_event_id
+      and (
+        (l.status = 'drawing' and l.updated_at > now() - interval '5 minutes')
+        or (l.status in ('completed', 'failed') and l.updated_at > now() - interval '45 seconds')
+      )
+    limit 1
+  );
+end;
+$$;
+
+create or replace function public.start_raffle_live_draw(
+  p_slug text,
+  p_admin_pin text,
+  p_prize_id uuid,
+  p_draw_count integer default 1
+)
+returns table(
+  id uuid,
+  prize_name text,
+  provider text,
+  draw_count integer,
+  started_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event public.raffle_events%rowtype;
+  v_prize public.raffle_prizes%rowtype;
+  v_draw_count integer;
+  v_filled integer;
+  v_pending integer;
+  v_remaining integer;
+  v_eligible integer;
+begin
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
+
+  if v_event.status <> 'live' then
+    raise exception '活動已關閉。';
+  end if;
+
+  v_draw_count := coalesce(p_draw_count, 1);
+
+  if v_draw_count < 1 or v_draw_count > 50 then
+    raise exception '本次抽出人數必須介於 1 到 50。';
+  end if;
+
+  select *
+  into v_prize
+  from public.raffle_prizes p
+  where p.id = p_prize_id
+    and p.event_id = v_event.id
+    and p.is_active
+  for update;
+
+  if not found then
+    raise exception '找不到獎項。';
+  end if;
+
+  select count(*)::integer
+  into v_filled
+  from public.raffle_draws d
+  where d.prize_id = v_prize.id
+    and d.status in ('accepted', 'transferred');
+
+  select count(*)::integer
+  into v_pending
+  from public.raffle_draws d
+  where d.prize_id = v_prize.id
+    and d.status = 'pending';
+
+  v_remaining := v_prize.quantity - v_filled - v_pending;
+
+  if v_remaining <= 0 then
+    raise exception '此獎項已沒有剩餘名額。';
+  end if;
+
+  if v_draw_count > v_remaining then
+    raise exception '本次抽出人數超過此獎項剩餘名額。';
+  end if;
+
+  select count(*)::integer
+  into v_eligible
+  from public.rooc_members m
+  where m.is_active
+    and (v_prize.provider_member_id is null or m.id <> v_prize.provider_member_id)
+    and not exists (
+      select 1
+      from public.raffle_exclusions x
+      where x.event_id = v_event.id
+        and x.member_id = m.id
+    );
+
+  if v_eligible <= 0 then
+    raise exception '沒有可抽選的成員了；獎項提供者不會抽中自己的獎。';
+  end if;
+
+  if v_draw_count > v_eligible then
+    raise exception '本次抽出人數超過可抽選成員數。';
+  end if;
+
+  return query
+  insert into public.raffle_live_draws as live_row (
+    event_id,
+    prize_id,
+    prize_name,
+    provider,
+    draw_count,
+    status,
+    result_draw_ids,
+    error_message,
+    started_at,
+    updated_at,
+    completed_at
+  )
+  values (
+    v_event.id,
+    v_prize.id,
+    v_prize.name,
+    v_prize.provider,
+    v_draw_count,
+    'drawing',
+    '{}'::uuid[],
+    null,
+    now(),
+    now(),
+    null
+  )
+  on conflict (event_id) do update
+  set
+    id = extensions.gen_random_uuid(),
+    prize_id = excluded.prize_id,
+    prize_name = excluded.prize_name,
+    provider = excluded.provider,
+    draw_count = excluded.draw_count,
+    status = 'drawing',
+    result_draw_ids = '{}'::uuid[],
+    error_message = null,
+    started_at = now(),
+    updated_at = now(),
+    completed_at = null
+  returning
+    live_row.id,
+    live_row.prize_name,
+    live_row.provider,
+    live_row.draw_count,
+    live_row.started_at;
+end;
+$$;
+
+create or replace function public.finish_raffle_live_draw(
+  p_slug text,
+  p_admin_pin text,
+  p_live_id uuid,
+  p_status text,
+  p_draw_ids uuid[] default '{}',
+  p_error_message text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event_id uuid;
+  v_status text := lower(trim(coalesce(p_status, '')));
+begin
+  v_event_id := public.validate_event_admin(p_slug, p_admin_pin);
+
+  if p_live_id is null then
+    raise exception '找不到直播抽獎狀態。';
+  end if;
+
+  if v_status not in ('completed', 'failed') then
+    raise exception '直播抽獎狀態不正確。';
+  end if;
+
+  update public.raffle_live_draws l
+  set
+    status = v_status,
+    result_draw_ids = coalesce(p_draw_ids, '{}'::uuid[]),
+    error_message = left(nullif(trim(coalesce(p_error_message, '')), ''), 500),
+    updated_at = now(),
+    completed_at = now()
+  where l.event_id = v_event_id
+    and l.id = p_live_id;
+
+  if not found then
+    raise exception '找不到直播抽獎狀態。';
+  end if;
 end;
 $$;
 
@@ -1377,9 +2027,22 @@ declare
   v_pending integer;
   v_remaining integer;
   v_eligible integer;
+  v_round_eligible integer;
+  v_active_member_count integer;
+  v_excluded_count integer;
+  v_provider_excluded boolean;
+  v_prize_remaining_before integer;
   v_slot integer;
   v_draw_id uuid;
-  v_token text;
+  v_round_id uuid := extensions.gen_random_uuid();
+  v_seed text;
+  v_eligible_members jsonb;
+  v_eligible_manifest text;
+  v_eligible_manifest_hash text;
+  v_selector_input text;
+  v_selector_hash text;
+  v_selected_index integer;
+  v_selected_member_id uuid;
   v_index integer;
 begin
   select *
@@ -1453,25 +2116,9 @@ begin
     raise exception '本次抽出人數超過可抽選成員數。';
   end if;
 
+  v_round_eligible := v_eligible;
+
   for v_index in 1..v_draw_count loop
-    select *
-    into v_member
-    from public.rooc_members m
-    where m.is_active
-      and (v_prize.provider_member_id is null or m.id <> v_prize.provider_member_id)
-      and not exists (
-        select 1
-        from public.raffle_exclusions x
-        where x.event_id = v_event.id
-          and x.member_id = m.id
-      )
-    order by extensions.gen_random_uuid()
-    limit 1;
-
-    if not found then
-      raise exception '沒有可抽選的成員了；獎項提供者不會抽中自己的獎。';
-    end if;
-
     select open_slots.slot_number
     into v_slot
     from generate_series(1, v_prize.quantity) as open_slots(slot_number)
@@ -1489,7 +2136,101 @@ begin
       raise exception '此獎項已沒有剩餘名額。';
     end if;
 
-    v_token := encode(extensions.gen_random_bytes(16), 'hex');
+    select count(*)::integer
+    into v_active_member_count
+    from public.rooc_members m
+    where m.is_active;
+
+    select count(*)::integer
+    into v_excluded_count
+    from public.raffle_exclusions x
+    join public.rooc_members m on m.id = x.member_id
+    where x.event_id = v_event.id
+      and m.is_active;
+
+    v_provider_excluded := exists (
+      select 1
+      from public.rooc_members pm
+      where pm.id = v_prize.provider_member_id
+        and pm.is_active
+        and not exists (
+          select 1
+          from public.raffle_exclusions x
+          where x.event_id = v_event.id
+            and x.member_id = pm.id
+        )
+    );
+
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', candidate.id,
+          'member_no', candidate.member_no,
+          'role_name', candidate.role_name,
+          'occupation', candidate.occupation,
+          'joined_dc', candidate.joined_dc
+        )
+        order by candidate.member_no
+      ),
+      '[]'::jsonb
+    )
+    into v_eligible_members
+    from (
+      select
+        m.id,
+        m.member_no,
+        public.member_label(m) as role_name,
+        m.occupation,
+        m.joined_dc
+      from public.rooc_members m
+      where m.is_active
+        and (v_prize.provider_member_id is null or m.id <> v_prize.provider_member_id)
+        and not exists (
+          select 1
+          from public.raffle_exclusions x
+          where x.event_id = v_event.id
+            and x.member_id = m.id
+        )
+      order by m.member_no
+    ) as candidate;
+
+    v_eligible := jsonb_array_length(v_eligible_members);
+
+    if v_eligible <= 0 then
+      raise exception '沒有可抽選的成員了；獎項提供者不會抽中自己的獎。';
+    end if;
+
+    v_seed := encode(extensions.gen_random_bytes(32), 'hex');
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'member_no', eligible.item ->> 'member_no',
+          'role_name', eligible.item ->> 'role_name',
+          'occupation', eligible.item ->> 'occupation',
+          'joined_dc', (eligible.item ->> 'joined_dc')::boolean
+        )
+        order by eligible.ordinality
+      ),
+      '[]'::jsonb
+    )::text
+    into v_eligible_manifest
+    from jsonb_array_elements(v_eligible_members) with ordinality as eligible(item, ordinality);
+    v_eligible_manifest_hash := encode(extensions.digest(v_eligible_manifest, 'sha256'), 'hex');
+    v_selector_input := v_seed || ':' || v_event.id::text || ':' || v_prize.id::text || ':' || v_slot::text || ':' || v_eligible_manifest_hash;
+    v_selector_hash := encode(extensions.digest(v_selector_input, 'sha256'), 'hex');
+    v_selected_index := (public.hex_prefix_to_bigint(v_selector_hash, 12) % v_eligible) + 1;
+    v_selected_member_id := (v_eligible_members -> (v_selected_index - 1) ->> 'id')::uuid;
+
+    select *
+    into v_member
+    from public.rooc_members m
+    where m.id = v_selected_member_id;
+
+    if not found then
+      raise exception '抽獎名單驗證失敗，請重新抽獎。';
+    end if;
+
+    v_prize_remaining_before := v_remaining - (v_index - 1);
 
     insert into public.raffle_draws (
       event_id,
@@ -1503,9 +2244,54 @@ begin
       v_prize.id,
       v_slot,
       v_member.id,
-      v_token
+      v_seed
     )
     returning id into v_draw_id;
+
+    insert into public.raffle_draw_audits (
+      event_id,
+      prize_id,
+      draw_id,
+      round_id,
+      round_draw_count,
+      round_index,
+      active_member_count,
+      excluded_count_before,
+      provider_member_id,
+      provider_excluded,
+      eligible_count,
+      step_probability,
+      round_probability,
+      prize_remaining_before,
+      random_seed,
+      eligible_members,
+      eligible_manifest,
+      eligible_manifest_hash,
+      selector_hash,
+      selected_index
+    )
+    values (
+      v_event.id,
+      v_prize.id,
+      v_draw_id,
+      v_round_id,
+      v_draw_count,
+      v_index,
+      v_active_member_count,
+      v_excluded_count,
+      v_prize.provider_member_id,
+      v_provider_excluded,
+      v_eligible,
+      round(1::numeric / v_eligible::numeric, 10),
+      round(v_draw_count::numeric / v_round_eligible::numeric, 10),
+      v_prize_remaining_before,
+      v_seed,
+      v_eligible_members,
+      v_eligible_manifest,
+      v_eligible_manifest_hash,
+      v_selector_hash,
+      v_selected_index
+    );
 
     insert into public.raffle_exclusions (event_id, member_id, reason, source_draw_id)
     values (v_event.id, v_member.id, 'pending', v_draw_id);
@@ -1517,7 +2303,7 @@ begin
       public.member_label(v_member),
       v_prize.name,
       v_slot,
-      v_token;
+      v_seed;
   end loop;
 end;
 $$;
@@ -1651,9 +2437,12 @@ revoke all on public.raffle_events from anon, authenticated;
 revoke all on public.raffle_prizes from anon, authenticated;
 revoke all on public.raffle_draws from anon, authenticated;
 revoke all on public.raffle_exclusions from anon, authenticated;
+revoke all on public.raffle_draw_audits from anon, authenticated;
+revoke all on public.raffle_live_draws from anon, authenticated;
 
 revoke execute on function public.slugify(text) from public, anon, authenticated;
 revoke execute on function public.member_label(public.rooc_members) from public, anon, authenticated;
+revoke execute on function public.hex_prefix_to_bigint(text, integer) from public, anon, authenticated;
 revoke execute on function public.assert_app_admin(text) from public, anon, authenticated;
 revoke execute on function public.validate_event_admin(text, text) from public, anon, authenticated;
 revoke execute on function public.initialize_app_admin(text) from public;
@@ -1674,6 +2463,11 @@ revoke execute on function public.set_raffle_prize_quantity(text, text, uuid, in
 revoke execute on function public.delete_raffle_prize(text, text, uuid) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
 revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
+revoke execute on function public.list_public_raffle_events() from public;
+revoke execute on function public.get_public_raffle_event(text) from public;
+revoke execute on function public.get_public_raffle_live_draw(text) from public;
+revoke execute on function public.start_raffle_live_draw(text, text, uuid, integer) from public;
+revoke execute on function public.finish_raffle_live_draw(text, text, uuid, text, uuid[], text) from public;
 revoke execute on function public.get_raffle_transfer_candidates(text, text) from public;
 revoke execute on function public.draw_raffle_prize(text, text, uuid, integer) from public;
 revoke execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) from public;
@@ -1697,6 +2491,11 @@ grant execute on function public.set_raffle_prize_quantity(text, text, uuid, int
 grant execute on function public.delete_raffle_prize(text, text, uuid) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;
+grant execute on function public.list_public_raffle_events() to anon, authenticated;
+grant execute on function public.get_public_raffle_event(text) to anon, authenticated;
+grant execute on function public.get_public_raffle_live_draw(text) to anon, authenticated;
+grant execute on function public.start_raffle_live_draw(text, text, uuid, integer) to anon, authenticated;
+grant execute on function public.finish_raffle_live_draw(text, text, uuid, text, uuid[], text) to anon, authenticated;
 grant execute on function public.get_raffle_transfer_candidates(text, text) to anon, authenticated;
 grant execute on function public.draw_raffle_prize(text, text, uuid, integer) to anon, authenticated;
 grant execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) to anon, authenticated;

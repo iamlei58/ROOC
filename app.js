@@ -31,6 +31,7 @@ const state = {
   historyEvent: null,
   providerMembers: [],
   transferCandidates: [],
+  transferCandidatesLoading: false,
   memberImportRawRows: [],
   memberImportRows: [],
   memberImportExisting: new Map(),
@@ -139,13 +140,18 @@ function bindForms() {
   $("#add-prize-form").addEventListener("submit", handleAddPrize);
   $("#prize-table").addEventListener("click", handlePrizeTableAction);
   $("#draw-prize-select").addEventListener("change", updateDrawCountLimit);
-  $("#draw-count").addEventListener("input", clampDrawCountInput);
+  $("#draw-count").addEventListener("input", () => {
+    clampDrawCountInput();
+    renderDrawOdds();
+  });
   $("#draw-prize").addEventListener("click", handleDrawPrize);
   $("#draw-animation-dialog").addEventListener("cancel", (event) => event.preventDefault());
   $("#draw-animation-dialog").addEventListener("click", handleDrawAnimationClick);
   $("#close-draw-animation").addEventListener("click", closeDrawAnimation);
   $("#pending-card").addEventListener("click", handlePendingAction);
+  $("#pending-card").addEventListener("click", handleClearPendingTransfer);
   $("#pending-card").addEventListener("submit", handlePendingTransfer);
+  $("#pending-card").addEventListener("change", handlePendingTransferSelection);
   $("#refresh-event").addEventListener("click", () => reloadEvent());
   $("#close-event").addEventListener("click", () => setEventStatus("closed"));
   $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
@@ -381,6 +387,7 @@ function forgetAppAdminPin() {
   state.historyEvent = null;
   state.providerMembers = [];
   state.transferCandidates = [];
+  state.transferCandidatesLoading = false;
   state.memberImportRawRows = [];
   state.memberImportRows = [];
   state.memberImportExisting = new Map();
@@ -558,16 +565,24 @@ async function refreshPrizeProviderMembers() {
 async function refreshTransferCandidates() {
   if (!state.appAdminPin || !state.event?.slug || (state.event.pending_draws || []).length === 0) {
     state.transferCandidates = [];
-    populateTransferMemberSelect();
+    state.transferCandidatesLoading = false;
+    renderPendingDraw();
     return;
   }
 
-  const rows = await rpc("get_raffle_transfer_candidates", {
-    p_slug: state.event.slug,
-    p_admin_pin: state.appAdminPin
-  });
-  state.transferCandidates = rows || [];
+  state.transferCandidatesLoading = true;
   populateTransferMemberSelect();
+
+  try {
+    const rows = await rpc("get_raffle_transfer_candidates", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin
+    });
+    state.transferCandidates = rows || [];
+  } finally {
+    state.transferCandidatesLoading = false;
+    renderPendingDraw();
+  }
 }
 
 function populatePrizeProviderSelect(preferredMemberNo = "") {
@@ -605,7 +620,12 @@ function populateTransferMemberSelect(preferredMemberNo = "") {
     const current = preferredMemberNo || select.value;
     destroyEnhancedSelect(select);
     select.innerHTML = "";
-    select.append(new Option("選擇轉讓對象", ""));
+    const placeholder = state.transferCandidatesLoading
+      ? "載入可轉讓名單中"
+      : state.transferCandidates.length === 0
+        ? "沒有可轉讓成員"
+        : "選擇轉讓對象";
+    select.append(new Option(placeholder, ""));
 
     state.transferCandidates.forEach((member) => {
       select.append(new Option(memberOptionLabel(member), member.member_no));
@@ -617,13 +637,27 @@ function populateTransferMemberSelect(preferredMemberNo = "") {
       select.value = "";
     }
 
-    select.disabled = state.transferCandidates.length === 0;
+    select.disabled = state.transferCandidatesLoading || state.transferCandidates.length === 0;
     enhanceSelect(select, {
       placeholder: "搜尋可轉讓成員",
       noResults: "沒有可轉讓成員"
     });
+    bindTransferSelectChange(select);
     syncEnhancedSelect(select);
+    updatePendingPrimaryAction(select.closest(".pending-item"));
   });
+}
+
+function bindTransferSelectChange(select) {
+  select.onchange = () => updatePendingPrimaryAction(select.closest(".pending-item"));
+
+  if (!window.jQuery?.fn?.select2) return;
+
+  window.jQuery(select)
+    .off(".pendingTransfer")
+    .on("change.pendingTransfer select2:select.pendingTransfer select2:clear.pendingTransfer", () => {
+      updatePendingPrimaryAction(select.closest(".pending-item"));
+    });
 }
 
 function memberOptionLabel(member) {
@@ -642,6 +676,7 @@ function updateDrawCountLimit() {
   if (!Number.isFinite(current) || current < 1 || current > limit) {
     countInput.value = String(limit > 0 ? Math.min(Math.max(Math.trunc(current || 1), 1), limit) : 0);
   }
+  renderDrawOdds();
 }
 
 function clampDrawCountInput() {
@@ -679,6 +714,30 @@ function getSelectedDrawLimit() {
     eligibleRemaining,
     limit: Math.min(prizeRemaining, eligibleRemaining)
   };
+}
+
+function renderDrawOdds() {
+  const card = $("#draw-odds-card");
+  if (!card) return;
+
+  const { prize, eligibleRemaining, limit } = getSelectedDrawLimit();
+  const countInput = $("#draw-count");
+  const rawDrawCount = Number(countInput?.value || 1);
+
+  if (!state.event || !prize || eligibleRemaining <= 0 || limit <= 0) {
+    card.hidden = true;
+    return;
+  }
+
+  const drawCount = Math.min(Math.max(Math.trunc(rawDrawCount || 1), 1), limit);
+  const probability = drawCount / eligibleRemaining;
+  const providerExcluded = prize.provider_excluded ? 1 : 0;
+  const excludedCount = Number(state.event.excluded_count || 0);
+  const activeCount = Number(state.event.total_active_members || 0);
+
+  $("#draw-odds-probability").textContent = `${drawCount}/${eligibleRemaining} = ${formatPercent(probability)}`;
+  $("#draw-odds-formula").textContent = `可抽人數 = 公會中 ${activeCount} - 已排除 ${excludedCount} - 獎項提供者 ${providerExcluded} = ${eligibleRemaining}；每位本輪機率 = 抽出人數 / 可抽人數。`;
+  card.hidden = false;
 }
 
 async function handleLoadEvent(event) {
@@ -853,6 +912,8 @@ async function loadEvent(slug) {
   }
 
   state.event = normalizeEvent(rows[0]);
+  state.transferCandidates = [];
+  state.transferCandidatesLoading = state.event.pending_draws.length > 0;
   syncLoadedEventSelection();
   renderEvent();
   await refreshPrizeProviderMembers();
@@ -953,7 +1014,7 @@ function renderHistoryEvent() {
 
   renderPrizeRows("#history-prize-table", event.prizes, "這場活動沒有獎項紀錄。");
   renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。");
-  renderDrawLogRows("#history-draw-log-table", event.recent_draws, "這場活動沒有抽獎紀錄。");
+  renderDrawLogRows("#history-draw-log-table", event.recent_draws, "這場活動沒有抽獎紀錄。", event.slug);
   refreshIcons();
 }
 
@@ -1060,7 +1121,7 @@ function renderPendingDraw() {
         </div>
       </div>
       <div class="button-row">
-        <button class="btn primary" type="button" data-pending-action="accept" data-draw-id="${escapeHtml(pending.id)}">
+        <button class="btn primary pending-primary-action" type="button" data-pending-action="accept" data-draw-id="${escapeHtml(pending.id)}">
           <i data-lucide="check"></i>
           <span>確認得獎</span>
         </button>
@@ -1080,11 +1141,8 @@ function renderPendingDraw() {
           <span>備註</span>
           <input name="note" autocomplete="off" placeholder="">
         </label>
-        <button class="btn secondary" type="submit">
-          <i data-lucide="move-right"></i>
-          <span>指定轉讓</span>
-        </button>
       </form>
+      <div class="pending-transfer-notice" data-transfer-notice hidden></div>
     `;
     list.appendChild(item);
   });
@@ -1211,27 +1269,51 @@ function renderAwardRows(selector, awards, emptyMessage) {
 }
 
 function renderDrawLog() {
-  renderDrawLogRows("#draw-log-table", state.event.recent_draws, "尚未有抽獎紀錄。");
+  renderDrawLogRows("#draw-log-table", state.event.recent_draws, "尚未有抽獎紀錄。", state.event.slug);
 }
 
-function renderDrawLogRows(selector, draws, emptyMessage) {
+function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "") {
   const body = $(selector);
   body.innerHTML = "";
 
   if (draws.length === 0) {
-    appendEmptyRow(body, 3, emptyMessage);
+    appendEmptyRow(body, 6, emptyMessage);
     return;
   }
 
   draws.forEach((draw) => {
     const row = document.createElement("tr");
+    const verifyUrl = buildPublicVerifyUrl(eventSlug, draw.id);
     row.innerHTML = `
       <td>${escapeHtml(draw.prize_name)}</td>
+      <td>${escapeHtml(draw.provider || "")}</td>
       <td>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</td>
-      <td>${escapeHtml(drawStatusText[draw.status] || draw.status)}</td>
+      <td>${escapeHtml(drawLogResultText(draw))}</td>
+      <td>${escapeHtml(formatPercent(draw.step_probability))}</td>
+      <td>
+        <a class="btn table-action" href="${escapeHtml(verifyUrl)}" target="_blank" rel="noopener">
+          <i data-lucide="shield-check"></i>
+          <span>驗證</span>
+        </a>
+      </td>
     `;
     body.appendChild(row);
   });
+}
+
+function drawLogResultText(draw) {
+  if (draw.status === "transferred") {
+    return `指定轉讓：${memberPlainText(draw.final_member_no, draw.final_role_name)}`;
+  }
+
+  return drawStatusText[draw.status] || draw.status;
+}
+
+function buildPublicVerifyUrl(eventSlug, drawId = "") {
+  const url = new URL("public.html", window.location.href);
+  if (eventSlug) url.searchParams.set("event", eventSlug);
+  if (drawId) url.searchParams.set("draw", drawId);
+  return `${url.pathname}${url.search}`;
 }
 
 async function handleAddPrize(event) {
@@ -1299,14 +1381,21 @@ async function handleDrawPrize() {
       throw new Error(`抽出人數不能大於剩餘可抽數量，目前最多 ${limit} 位（獎項剩餘 ${prizeRemaining}、可抽成員 ${eligibleRemaining}）。`);
     }
 
+    const [liveDraw] = await rpc("start_raffle_live_draw", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin,
+      p_prize_id: prizeId,
+      p_draw_count: drawCount
+    });
+
     const animationContext = {
-      prizeName: prize?.name || $("#draw-prize-select").selectedOptions[0]?.textContent || "抽獎",
+      prizeName: liveDraw?.prize_name || prize?.name || $("#draw-prize-select").selectedOptions[0]?.textContent || "抽獎",
       drawCount
     };
 
-    openDrawAnimation(animationContext);
     let keepResultOpen = false;
     try {
+      openDrawAnimation(animationContext);
       const [drawnRows] = await Promise.all([
         rpc("draw_raffle_prize", {
           p_slug: state.event.slug,
@@ -1314,19 +1403,40 @@ async function handleDrawPrize() {
           p_prize_id: prizeId,
           p_draw_count: drawCount
         }),
-        waitForAnimation(900)
+        waitForAnimation(2200)
       ]);
 
       await revealDrawAnimationResults(drawnRows || [], animationContext);
+      await finishLiveDraw(liveDraw?.id, "completed", drawnRows || []);
       await loadEvent(state.event.slug);
       showToast(drawCount > 1 ? `已抽出 ${drawCount} 位，請處理結果。` : "已抽出，請處理結果。", "success");
       keepResultOpen = true;
+    } catch (error) {
+      await finishLiveDraw(liveDraw?.id, "failed", [], error.message);
+      throw error;
     } finally {
       if (!keepResultOpen) {
         closeDrawAnimation();
       }
     }
   });
+}
+
+async function finishLiveDraw(liveId, status, drawRows = [], errorMessage = "") {
+  if (!liveId || !state.event?.slug || !state.appAdminPin) return;
+
+  try {
+    await rpc("finish_raffle_live_draw", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin,
+      p_live_id: liveId,
+      p_status: status,
+      p_draw_ids: drawRows.map((row) => row.draw_id).filter(Boolean),
+      p_error_message: errorMessage || null
+    });
+  } catch (error) {
+    showToast(`直播狀態更新失敗：${friendlyError(error.message)}`, "warning");
+  }
 }
 
 function openDrawAnimation(context) {
@@ -1587,6 +1697,16 @@ async function resolvePendingDraw(action, drawId, transferMemberNo = null, note 
 async function handlePendingAction(event) {
   const button = event.target.closest("[data-pending-action]");
   if (!button) return;
+  const item = button.closest(".pending-item");
+  const form = item?.querySelector("[data-transfer-form]");
+  const data = form ? new FormData(form) : null;
+  const transferMemberNo = String(data?.get("member_no") || "").trim();
+
+  if (button.dataset.pendingAction === "accept" && transferMemberNo) {
+    await resolvePendingDraw("transfer", button.dataset.drawId, transferMemberNo, data.get("note"));
+    return;
+  }
+
   await resolvePendingDraw(button.dataset.pendingAction, button.dataset.drawId);
 }
 
@@ -1601,6 +1721,62 @@ async function handlePendingTransfer(event) {
   } catch (error) {
     showToast(friendlyError(error.message), "error");
   }
+}
+
+function handlePendingTransferSelection(event) {
+  const select = event.target.closest("[data-transfer-select]");
+  if (!select) return;
+  updatePendingPrimaryAction(select.closest(".pending-item"));
+}
+
+function handleClearPendingTransfer(event) {
+  const button = event.target.closest("[data-clear-transfer]");
+  if (!button) return;
+  const item = button.closest(".pending-item");
+  const select = item?.querySelector("[data-transfer-select]");
+  if (!select) return;
+
+  select.value = "";
+  syncEnhancedSelect(select);
+  updatePendingPrimaryAction(item);
+}
+
+function updatePendingPrimaryAction(item) {
+  if (!item) return;
+
+  const select = item.querySelector("[data-transfer-select]");
+  const button = item.querySelector(".pending-primary-action");
+  if (!select || !button) return;
+
+  const hasTransferTarget = Boolean(select.value);
+  const label = button.querySelector("span");
+  const icon = button.querySelector("i");
+  const notice = item.querySelector("[data-transfer-notice]");
+  const transferLabel = select.selectedOptions[0]?.textContent || "";
+
+  item.classList.toggle("has-transfer-target", hasTransferTarget);
+  if (notice) {
+    notice.hidden = !hasTransferTarget;
+    notice.innerHTML = hasTransferTarget
+      ? `
+        <span>將指定轉讓給 ${escapeHtml(transferLabel)}，請按「指定轉讓」完成處理。</span>
+        <button class="btn secondary pending-clear-transfer" type="button" data-clear-transfer>
+          <i data-lucide="x"></i>
+          <span>取消轉讓</span>
+        </button>
+      `
+      : "";
+  }
+  button.classList.toggle("primary", !hasTransferTarget);
+  button.classList.toggle("accent", hasTransferTarget);
+  button.dataset.pendingAction = "accept";
+  if (label) {
+    label.textContent = hasTransferTarget ? "指定轉讓" : "確認得獎";
+  }
+  if (icon) {
+    icon.setAttribute("data-lucide", hasTransferTarget ? "move-right" : "check");
+  }
+  refreshIcons();
 }
 
 function actionMap(action) {
@@ -2961,9 +3137,13 @@ function asArray(value) {
 }
 
 function memberText(memberNo, displayName) {
+  return escapeHtml(memberPlainText(memberNo, displayName));
+}
+
+function memberPlainText(memberNo, displayName) {
   const label = displayName || memberNo || "";
   const suffix = memberNo && displayName && memberNo !== displayName ? `（${memberNo}）` : "";
-  return escapeHtml(`${label}${suffix}`);
+  return `${label}${suffix}`;
 }
 
 function appendEmptyRow(body, colspan, message) {
@@ -2978,6 +3158,12 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "-";
+  return `${(number * 100).toFixed(number < 0.01 ? 3 : 2)}%`;
 }
 
 function escapeHtml(value) {
