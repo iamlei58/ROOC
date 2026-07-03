@@ -28,7 +28,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
         run: |
           mkdir -p dist
-          cp index.html styles.css app.js config.js dist/
+          cp index.html public.html styles.css app.js public.js config.js dist/
           cp -R assets dist/assets
           touch dist/.nojekyll
           node <<'NODE'

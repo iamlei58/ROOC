@@ -167,6 +167,7 @@ function bindForms() {
   $("#change-admin-pin-form").addEventListener("submit", handleChangeAdminPin);
   $("#cancel-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#dismiss-admin-pin").addEventListener("click", cancelAdminPinPrompt);
+  $("#return-public-from-login").addEventListener("click", returnToPublicPage);
   $("#dismiss-change-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#confirm-dialog-accept").addEventListener("click", () => closeConfirmDialog(true));
   $("#confirm-dialog-cancel").addEventListener("click", () => closeConfirmDialog(false));
@@ -1963,12 +1964,15 @@ function openAdminPinDialog(mode) {
   const isChange = mode === "change";
   const isLogin = mode === "login";
   const isRequired = Boolean(state.adminPinRequired);
+  const canReturnPublic = isLogin && isRequired;
 
   $("#admin-pin-title").textContent = isChange ? "修改管理密碼" : isLogin ? "後台登入" : "管理密碼";
   $("#admin-pin-label").textContent = isLogin ? "輸入管理密碼" : "首次設定或驗證管理密碼";
   $("#admin-pin-submit-label").textContent = isLogin ? "登入" : "確認";
-  $("#cancel-admin-pin").hidden = isRequired;
+  $("#cancel-admin-pin").hidden = isRequired && !canReturnPublic;
+  $("#cancel-admin-pin").setAttribute("aria-label", canReturnPublic ? "返回公開驗證" : "取消管理密碼驗證");
   $("#dismiss-admin-pin").hidden = isRequired;
+  $("#return-public-from-login").hidden = !canReturnPublic;
   verifyForm.hidden = isChange;
   changeForm.hidden = !isChange;
   verifyForm.reset();
@@ -1984,8 +1988,27 @@ function openAdminPinDialog(mode) {
 }
 
 function cancelAdminPinPrompt() {
-  if (state.adminPinRequired) return;
+  if (state.adminPinRequired) {
+    if (state.adminPinMode === "login") {
+      returnToPublicPage();
+    }
+    return;
+  }
   closeAdminPinDialog(null);
+}
+
+function returnToPublicPage() {
+  window.location.href = buildPublicPageUrl();
+}
+
+function buildPublicPageUrl() {
+  const url = new URL("public.html", window.location.href);
+  const params = new URLSearchParams(window.location.search);
+  const eventSlug = params.get("event") || params.get("slug") || state.eventSlugHint || "";
+  if (eventSlug) {
+    url.searchParams.set("event", eventSlug);
+  }
+  return `${url.pathname}${url.search}`;
 }
 
 function closeAdminPinDialog(resolveValue = null) {
@@ -1995,6 +2018,7 @@ function closeAdminPinDialog(resolveValue = null) {
   state.adminPinRequired = false;
   $("#admin-pin-form").reset();
   $("#change-admin-pin-form").reset();
+  $("#return-public-from-login").hidden = true;
   closeModalDialog($("#admin-pin-dialog"));
   if (prompt) {
     prompt.resolve(resolveValue);
