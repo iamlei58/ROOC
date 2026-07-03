@@ -154,12 +154,14 @@ h3 {
   white-space: nowrap;
 }
 
+.hero-password,
 .hero-logout {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.12);
 }
 
+.hero-password:hover,
 .hero-logout:hover {
   background: rgba(255, 255, 255, 0.2);
 }
@@ -1618,6 +1620,11 @@ tr:last-child td {
   background: rgba(47, 133, 90, 0.12);
 }
 
+.table-badge.is-pending {
+  color: #7a5200;
+  background: rgba(244, 185, 66, 0.18);
+}
+
 .table-badge.is-off {
   color: #9a3a34;
   background: rgba(194, 65, 58, 0.11);
@@ -1644,6 +1651,10 @@ tr:last-child td {
 
 .member-modal {
   width: min(560px, calc(100% - 28px));
+}
+
+.import-modal {
+  width: min(920px, calc(100% - 28px));
 }
 
 .modal::backdrop {
@@ -1706,6 +1717,39 @@ tr:last-child td {
   align-items: end;
 }
 
+.import-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.import-options {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px 14px;
+  padding-bottom: 10px;
+}
+
+.import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.import-preview {
+  max-height: min(380px, 48vh);
+}
+
+.import-row-error td {
+  background: rgba(194, 65, 58, 0.05);
+}
+
+.import-row-done td {
+  background: rgba(47, 133, 90, 0.05);
+}
+
 @media (max-width: 920px) {
   .app-shell {
     width: min(100% - 20px, 1220px);
@@ -1765,8 +1809,14 @@ tr:last-child td {
   .draw-controls,
   .transfer-form,
   .modal-form,
-  .modal-form-fields {
+  .modal-form-fields,
+  .import-grid {
     grid-template-columns: 1fr;
+  }
+
+  .import-options {
+    justify-content: flex-start;
+    padding-bottom: 0;
   }
 
   .modal-shell {

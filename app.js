@@ -30,6 +30,9 @@ const state = {
   historyEvent: null,
   providerMembers: [],
   transferCandidates: [],
+  memberImportRawRows: [],
+  memberImportRows: [],
+  memberImportExisting: new Map(),
   eventSlugHint: "",
   drawAnimationMode: "fireworks",
   lastDrawAnimationMode: "",
@@ -67,6 +70,14 @@ const drawStatusText = {
   accepted: "確認得獎",
   declined: "放棄重抽",
   transferred: "指定轉讓"
+};
+
+const MEMBER_IMPORT_HEADER_ALIASES = {
+  member_no: ["編號", "成員編號", "會員編號", "id", "no", "memberno", "memberid"],
+  role_name: ["角色名稱", "角色名", "角色", "名稱", "暱稱", "角色id", "角色ID", "rolename", "name", "nickname"],
+  occupation: ["職業", "職位", "occupation", "job", "class"],
+  joined_dc: ["是否加入dc", "已加入dc", "加入dc", "dc", "discord"],
+  is_active: ["公會狀態", "狀態", "是否在公會", "公會中", "啟用", "active", "status"]
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -152,6 +163,15 @@ function bindForms() {
   $("#dismiss-change-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#open-member-create-dialog").addEventListener("click", openMemberCreateDialog);
   $("#close-member-create-dialog").addEventListener("click", closeMemberCreateDialog);
+  $("#open-member-import-dialog").addEventListener("click", openMemberImportDialog);
+  $("#close-member-import-dialog").addEventListener("click", closeMemberImportDialog);
+  $("#cancel-member-import-dialog").addEventListener("click", closeMemberImportDialog);
+  $("#clear-member-import").addEventListener("click", () => resetMemberImportDialog({ keepFile: false }));
+  $("#download-member-import-template").addEventListener("click", downloadMemberImportTemplate);
+  $("#member-import-form").addEventListener("submit", handleMemberImportSubmit);
+  $("#member-import-file").addEventListener("change", handleMemberImportFile);
+  $("#member-import-form").elements.auto_create_occupations.addEventListener("change", renderMemberImportPreview);
+  $("#member-import-form").elements.update_existing.addEventListener("change", renderMemberImportPreview);
   $("#open-occupation-dialog").addEventListener("click", openOccupationDialog);
   $("#close-occupation-dialog").addEventListener("click", closeOccupationDialog);
   $("#occupation-form").addEventListener("submit", handleOccupationSave);
@@ -175,6 +195,7 @@ function bindDialogBackdrops() {
     ["#create-event-dialog", closeCreateEventDialog],
     ["#bonus-prize-dialog", closeBonusPrizeDialog],
     ["#member-create-dialog", closeMemberCreateDialog],
+    ["#member-import-dialog", closeMemberImportDialog],
     ["#member-edit-dialog", closeMemberEditDialog],
     ["#occupation-dialog", closeOccupationDialog],
     ["#admin-pin-dialog", cancelAdminPinPrompt]
@@ -355,6 +376,9 @@ function forgetAppAdminPin() {
   state.historyEvent = null;
   state.providerMembers = [];
   state.transferCandidates = [];
+  state.memberImportRawRows = [];
+  state.memberImportRows = [];
+  state.memberImportExisting = new Map();
   state.eventSlugHint = "";
   writeSessionValue(STORAGE_KEYS.appAdminPin, "");
   writeLocalValue(STORAGE_KEYS.eventSlug, "");
@@ -2168,6 +2192,355 @@ function resetMemberCreateForm(options = {}) {
   }
 }
 
+async function openMemberImportDialog() {
+  await withBusy($("#open-member-import-dialog").parentElement, async () => {
+    await ensureAppAdminPin();
+    await loadOccupations();
+    resetMemberImportDialog({ keepFile: false });
+    showModalDialog($("#member-import-dialog"));
+    refreshIcons();
+  });
+}
+
+function closeMemberImportDialog() {
+  resetMemberImportDialog({ keepFile: false });
+  closeModalDialog($("#member-import-dialog"));
+}
+
+function resetMemberImportDialog(options = {}) {
+  const { keepFile = false } = options;
+  const form = $("#member-import-form");
+
+  if (!keepFile) {
+    form.reset();
+    form.elements.auto_create_occupations.checked = true;
+    form.elements.update_existing.checked = false;
+  }
+
+  state.memberImportRawRows = [];
+  state.memberImportRows = [];
+  state.memberImportExisting = new Map();
+  $("#member-import-table").innerHTML = "";
+  $("#member-import-summary").hidden = true;
+  $("#member-import-preview").hidden = true;
+  $("#confirm-member-import").disabled = true;
+}
+
+async function handleMemberImportFile(event) {
+  const file = event.currentTarget.files?.[0];
+  if (!file) {
+    resetMemberImportDialog({ keepFile: true });
+    return;
+  }
+
+  const form = $("#member-import-form");
+  await withBusy(form, async () => {
+    await ensureAppAdminPin();
+    await loadOccupations();
+    state.memberImportRawRows = [];
+    state.memberImportRows = [];
+    state.memberImportExisting = new Map();
+    renderMemberImportPreview();
+    const rawRows = await readMemberImportFile(file);
+    if (rawRows.length === 0) {
+      throw new Error("檔案裡沒有可匯入的資料。");
+    }
+
+    state.memberImportRawRows = rawRows;
+    state.memberImportExisting = await buildMemberImportExistingMap(rawRows);
+    renderMemberImportPreview();
+  });
+  renderMemberImportPreview();
+}
+
+async function readMemberImportFile(file) {
+  if (!window.XLSX?.read || !window.XLSX?.utils?.sheet_to_json) {
+    throw new Error("Excel 解析套件尚未載入，請重新整理頁面。");
+  }
+
+  const buffer = await file.arrayBuffer();
+  const workbook = window.XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames?.[0];
+  if (!sheetName) {
+    throw new Error("檔案裡沒有工作表。");
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+  return window.XLSX.utils
+    .sheet_to_json(sheet, { defval: "", raw: false })
+    .filter((row) => !isImportRowBlank(row));
+}
+
+async function buildMemberImportExistingMap(rawRows) {
+  const memberNos = Array.from(new Set(
+    rawRows
+      .map((row) => cleanImportValue(pickImportValue(row, "member_no")))
+      .filter(Boolean)
+  ));
+  const existing = new Map();
+
+  for (const memberNo of memberNos) {
+    existing.set(memberNo, await memberExists(memberNo));
+  }
+
+  return existing;
+}
+
+async function memberExists(memberNo) {
+  const rows = await rpc("get_rooc_members", {
+    p_app_admin_pin: state.appAdminPin,
+    p_query: memberNo,
+    p_include_inactive: true
+  });
+  return (rows || []).some((member) => member.member_no === memberNo);
+}
+
+function renderMemberImportPreview() {
+  const rows = buildMemberImportRows();
+  state.memberImportRows = rows;
+  renderMemberImportSummary(rows);
+  renderMemberImportTable(rows);
+}
+
+function buildMemberImportRows() {
+  const form = $("#member-import-form");
+  const autoCreateOccupations = form.elements.auto_create_occupations.checked;
+  const updateExisting = form.elements.update_existing.checked;
+  const activeOccupations = new Set(
+    state.occupations
+      .filter((occupation) => occupation.is_active)
+      .map((occupation) => occupation.name)
+  );
+  const memberNoCounts = countImportMemberNos(state.memberImportRawRows);
+
+  return state.memberImportRawRows.map((raw, index) => {
+    const memberNo = cleanImportValue(pickImportValue(raw, "member_no"));
+    const roleName = cleanImportValue(pickImportValue(raw, "role_name"));
+    const occupation = cleanImportValue(pickImportValue(raw, "occupation"));
+    const joinedDc = parseImportDcValue(pickImportValue(raw, "joined_dc"));
+    const isActive = parseImportActiveValue(pickImportValue(raw, "is_active"));
+    const exists = memberNo ? Boolean(state.memberImportExisting.get(memberNo)) : false;
+    const errors = [];
+    let newOccupation = false;
+
+    if (!memberNo) errors.push("缺少編號");
+    if (!roleName) errors.push("缺少角色名稱");
+    if (memberNo && memberNo.length > 80) errors.push("編號超過 80 字");
+    if (roleName && roleName.length > 120) errors.push("角色名稱超過 120 字");
+    if (memberNo && memberNoCounts.get(memberNo) > 1) errors.push("檔案內編號重複");
+    if (exists && !updateExisting) errors.push("編號已存在");
+
+    if (occupation && !activeOccupations.has(occupation)) {
+      if (autoCreateOccupations) {
+        newOccupation = true;
+      } else {
+        errors.push("職業未啟用");
+      }
+    }
+
+    return {
+      rowNumber: index + 2,
+      member_no: memberNo,
+      role_name: roleName,
+      occupation,
+      joined_dc: joinedDc,
+      is_active: isActive,
+      exists,
+      newOccupation,
+      errors
+    };
+  });
+}
+
+function countImportMemberNos(rawRows) {
+  const counts = new Map();
+  rawRows.forEach((raw) => {
+    const memberNo = cleanImportValue(pickImportValue(raw, "member_no"));
+    if (!memberNo) return;
+    counts.set(memberNo, (counts.get(memberNo) || 0) + 1);
+  });
+  return counts;
+}
+
+function renderMemberImportSummary(rows = state.memberImportRows) {
+  const summary = $("#member-import-summary");
+  const preview = $("#member-import-preview");
+  const validRows = rows.filter((row) => row.errors.length === 0);
+  const errorRows = rows.filter((row) => row.errors.length > 0);
+  const newOccupations = getMemberImportNewOccupations(validRows);
+
+  summary.hidden = rows.length === 0;
+  preview.hidden = rows.length === 0;
+  $("#member-import-total").textContent = `${rows.length} 筆`;
+  $("#member-import-valid").textContent = `${validRows.length} 筆可匯入`;
+  $("#member-import-error").textContent = `${errorRows.length} 筆錯誤`;
+  $("#member-import-occupation").textContent = `${newOccupations.length} 個新職業`;
+  $("#confirm-member-import").disabled = validRows.length === 0;
+}
+
+function renderMemberImportTable(rows = state.memberImportRows) {
+  const body = $("#member-import-table");
+  body.innerHTML = "";
+
+  if (rows.length === 0) {
+    appendEmptyRow(body, 7, "尚未選擇檔案。");
+    return;
+  }
+
+  rows.forEach((row) => {
+    const rowElement = document.createElement("tr");
+    const status = memberImportStatus(row);
+    const note = row.importMessage || row.errors.join("、") || (row.newOccupation ? "將建立職業" : "");
+    rowElement.classList.toggle("import-row-error", row.errors.length > 0 || row.importStatus === "failed");
+    rowElement.classList.toggle("import-row-done", row.importStatus === "done");
+    rowElement.innerHTML = `
+      <td><span class="table-badge ${status.className}">${status.label}</span></td>
+      <td>${escapeHtml(row.member_no)}</td>
+      <td>${escapeHtml(row.role_name)}</td>
+      <td>${escapeHtml(row.occupation || "")}</td>
+      <td>${row.joined_dc ? "是" : "否"}</td>
+      <td>${row.is_active ? "公會中" : "已退會"}</td>
+      <td>${escapeHtml(note)}</td>
+    `;
+    body.appendChild(rowElement);
+  });
+}
+
+function memberImportStatus(row) {
+  if (row.importStatus === "importing") return { label: "匯入中", className: "is-pending" };
+  if (row.importStatus === "done") return { label: "完成", className: "is-on" };
+  if (row.importStatus === "failed") return { label: "失敗", className: "is-off" };
+  if (row.errors.length > 0) return { label: "錯誤", className: "is-off" };
+  if (row.exists) return { label: "更新", className: "is-pending" };
+  return { label: "新增", className: "is-on" };
+}
+
+function getMemberImportNewOccupations(rows = state.memberImportRows) {
+  return Array.from(new Set(
+    rows
+      .filter((row) => row.errors.length === 0 && row.newOccupation && row.occupation)
+      .map((row) => row.occupation)
+  ));
+}
+
+async function handleMemberImportSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+
+  await withBusy(form, async () => {
+    await ensureAppAdminPin();
+    await loadOccupations();
+    renderMemberImportPreview();
+
+    const rows = state.memberImportRows.filter((row) => row.errors.length === 0);
+    if (rows.length === 0) {
+      throw new Error("沒有可匯入的資料。");
+    }
+
+    const newOccupations = getMemberImportNewOccupations(rows);
+    for (const occupation of newOccupations) {
+      await rpc("upsert_rooc_occupation", {
+        p_app_admin_pin: state.appAdminPin,
+        p_name: occupation,
+        p_original_name: null,
+        p_is_active: true
+      });
+    }
+
+    if (newOccupations.length > 0) {
+      await loadOccupations();
+    }
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const row of rows) {
+      row.importStatus = "importing";
+      row.importMessage = "匯入中";
+      renderMemberImportTable();
+
+      try {
+        await rpc("upsert_rooc_member", {
+          p_app_admin_pin: state.appAdminPin,
+          p_member_no: row.member_no,
+          p_original_member_no: row.exists ? row.member_no : null,
+          p_role_name: row.role_name,
+          p_occupation: row.occupation || null,
+          p_joined_dc: row.joined_dc,
+          p_is_active: row.is_active
+        });
+        row.importStatus = "done";
+        row.importMessage = row.exists ? "已更新" : "已新增";
+        row.exists = true;
+        state.memberImportExisting.set(row.member_no, true);
+        successCount += 1;
+      } catch (error) {
+        row.importStatus = "failed";
+        row.importMessage = friendlyError(error.message);
+        failedCount += 1;
+      }
+
+      renderMemberImportTable();
+    }
+
+    await loadMembers();
+    await refreshPrizeProviderMembers();
+    await refreshTransferCandidates();
+    showToast(`匯入完成：成功 ${successCount} 筆，失敗 ${failedCount} 筆。`, failedCount > 0 ? "warning" : "success");
+  });
+  renderMemberImportSummary();
+  renderMemberImportTable();
+}
+
+function downloadMemberImportTemplate() {
+  downloadCsv("rooc-members-template.csv", [
+    ["編號", "角色名稱", "職業", "是否加入DC", "公會狀態"],
+    ["M0001", "雞蛋糕", "神官", "是", "公會中"],
+    ["M0002", "Nanami", "騎士", "否", "公會中"]
+  ]);
+}
+
+function pickImportValue(row, key) {
+  const aliases = MEMBER_IMPORT_HEADER_ALIASES[key].map(normalizeImportHeader);
+  const matchedKey = Object.keys(row).find((header) => aliases.includes(normalizeImportHeader(header)));
+  return matchedKey ? row[matchedKey] : "";
+}
+
+function normalizeImportHeader(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-:：/\\]/g, "");
+}
+
+function cleanImportValue(value) {
+  return String(value ?? "").trim();
+}
+
+function isImportRowBlank(row) {
+  return Object.values(row).every((value) => cleanImportValue(value) === "");
+}
+
+function parseImportDcValue(value) {
+  const text = normalizeImportBooleanText(value);
+  if (!text) return false;
+  if (text.includes("未加入") || text.includes("否") || text.includes("無") || text === "0" || text === "false" || text === "no" || text === "n") return false;
+  if (text.includes("已加入") || text.includes("加入") || text.includes("是") || text === "1" || text === "true" || text === "yes" || text === "y") return true;
+  return false;
+}
+
+function parseImportActiveValue(value) {
+  const text = normalizeImportBooleanText(value);
+  if (!text) return true;
+  if (text.includes("退") || text.includes("離") || text.includes("停") || text.includes("否") || text === "0" || text === "false" || text === "no" || text === "n") return false;
+  if (text.includes("公會中") || text.includes("在會") || text.includes("啟用") || text.includes("是") || text === "1" || text === "true" || text === "yes" || text === "y") return true;
+  return true;
+}
+
+function normalizeImportBooleanText(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
 async function toggleMember(memberNo, isActive) {
   await withBusy($("#member-table"), async () => {
     await ensureAppAdminPin();
@@ -2301,6 +2674,8 @@ function friendlyError(message) {
   if (text.includes("Member number already exists") || text.includes("成員編號已存在")) return "成員編號已存在。";
   if (text.includes("Member number is required") || text.includes("請輸入成員編號")) return "請輸入成員編號。";
   if (text.includes("Role name is required") || text.includes("請輸入角色名稱")) return "請輸入角色名稱。";
+  if (text.includes("此職業目前未啟用")) return "此職業目前未啟用。";
+  if (text.includes("請輸入職業名稱")) return "請輸入職業名稱。";
   return text || "操作失敗。";
 }
 
