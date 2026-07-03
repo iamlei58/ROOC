@@ -214,6 +214,7 @@ function hydrateStoredPins() {
 
   if (state.appAdminPin) {
     $("#member-status").textContent = "已登入";
+    $("#change-admin-pin").hidden = false;
     $("#logout-admin").hidden = false;
   }
 }
@@ -342,6 +343,7 @@ function rememberAppAdminPin(pin) {
   state.appAdminPin = pin;
   writeSessionValue(STORAGE_KEYS.appAdminPin, pin);
   $("#member-status").textContent = "已登入";
+  $("#change-admin-pin").hidden = false;
   $("#logout-admin").hidden = false;
 }
 
@@ -358,6 +360,7 @@ function forgetAppAdminPin() {
   writeLocalValue(STORAGE_KEYS.eventSlug, "");
   writeLocalValue(STORAGE_KEYS.eventTitle, "");
   $("#member-status").textContent = "未載入";
+  $("#change-admin-pin").hidden = true;
   $("#logout-admin").hidden = true;
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
