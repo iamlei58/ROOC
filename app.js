@@ -483,9 +483,10 @@ function renderOpenEventOptions(preferredSlug = "") {
   if (!select) return;
 
   const current = preferredSlug || select.value;
+  const hasOpenEvents = state.openEvents.length > 0;
   destroyEnhancedSelect(select);
   select.innerHTML = "";
-  select.append(new Option("選擇活動", ""));
+  select.append(new Option(hasOpenEvents ? "選擇活動" : "目前沒有未完成活動", ""));
 
   state.openEvents.forEach((event) => {
     const label = `${event.title} / ${formatDate(event.created_at)}`;
@@ -503,9 +504,10 @@ function renderOpenEventOptions(preferredSlug = "") {
     }
   }
 
-  select.disabled = state.openEvents.length === 0;
+  select.disabled = !hasOpenEvents;
+  $("#load-event-form button[type='submit']").disabled = !hasOpenEvents;
   enhanceSelect(select, {
-    placeholder: "搜尋未完成活動",
+    placeholder: hasOpenEvents ? "搜尋未完成活動" : "目前沒有未完成活動，請先建立活動",
     noResults: "沒有未完成活動"
   });
   syncEnhancedSelect(select);
@@ -524,9 +526,10 @@ function renderHistoryEventOptions(preferredSlug = "") {
   if (!select) return;
 
   const current = preferredSlug || select.value;
+  const hasHistoryEvents = state.historyEvents.length > 0;
   destroyEnhancedSelect(select);
   select.innerHTML = "";
-  select.append(new Option("選擇歷史活動", ""));
+  select.append(new Option(hasHistoryEvents ? "選擇歷史活動" : "目前沒有已結束活動", ""));
 
   state.historyEvents.forEach((event) => {
     const label = `${event.title} / ${formatDate(event.closed_at || event.created_at)}`;
@@ -539,9 +542,10 @@ function renderHistoryEventOptions(preferredSlug = "") {
     select.value = "";
   }
 
-  select.disabled = state.historyEvents.length === 0;
+  select.disabled = !hasHistoryEvents;
+  $("#history-event-form button[type='submit']").disabled = !hasHistoryEvents;
   enhanceSelect(select, {
-    placeholder: "搜尋已結束活動",
+    placeholder: hasHistoryEvents ? "搜尋已結束活動" : "目前沒有已結束活動",
     noResults: "沒有歷史活動"
   });
   syncEnhancedSelect(select);
