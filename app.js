@@ -1,6 +1,4 @@
 const STORAGE_KEYS = {
-  url: "rooc_supabase_url",
-  anonKey: "rooc_supabase_anon_key",
   eventSlug: "rooc_event_slug"
 };
 
@@ -24,7 +22,8 @@ const drawStatusText = {
   transferred: "指定轉讓"
 };
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  await loadOptionalLocalConfig();
   bindTabs();
   bindForms();
   hydrateConfig();
@@ -59,8 +58,6 @@ function switchTab(tabName) {
 }
 
 function bindForms() {
-  $("#settings-form").addEventListener("submit", handleSettings);
-  $("#clear-settings").addEventListener("click", clearSettings);
   $("#load-event-form").addEventListener("submit", handleLoadEvent);
   $("#create-event-form").addEventListener("submit", handleCreateEvent);
   $("#add-prize-form").addEventListener("submit", handleAddPrize);
@@ -79,12 +76,10 @@ function bindForms() {
 
 function hydrateConfig() {
   const runtime = window.ROOC_SUPABASE_CONFIG || {};
-  const url = localStorage.getItem(STORAGE_KEYS.url) || runtime.url || "";
-  const anonKey = localStorage.getItem(STORAGE_KEYS.anonKey) || runtime.anonKey || "";
-
-  $("#supabase-url").value = url;
-  $("#supabase-anon-key").value = anonKey;
-  configureClient(url, anonKey, false);
+  configureClient(runtime.url, runtime.anonKey);
+  if (!state.client) {
+    showToast("Supabase 尚未設定。請設定 SUPABASE_URL 與 SUPABASE_ANON_KEY。", "error");
+  }
 }
 
 function hydrateEventSlug() {
@@ -95,7 +90,7 @@ function hydrateEventSlug() {
   }
 }
 
-function configureClient(url, anonKey, persist) {
+function configureClient(url, anonKey) {
   const cleanUrl = String(url || "").trim();
   const cleanKey = String(anonKey || "").trim();
 
@@ -113,34 +108,33 @@ function configureClient(url, anonKey, persist) {
   }
 
   state.client = window.supabase.createClient(cleanUrl, cleanKey);
-  if (persist) {
-    localStorage.setItem(STORAGE_KEYS.url, cleanUrl);
-    localStorage.setItem(STORAGE_KEYS.anonKey, cleanKey);
-  }
   renderConnection(true);
 }
 
 function renderConnection(connected) {
   $("#connection-pill").classList.toggle("is-connected", connected);
   $("#connection-text").textContent = connected ? "Supabase 已連線" : "尚未連線";
-  $("#settings-status").textContent = connected ? "已設定" : "未設定";
 }
 
-async function handleSettings(event) {
-  event.preventDefault();
-  const data = new FormData(event.currentTarget);
-  configureClient(data.get("supabase_url"), data.get("supabase_anon_key"), true);
-  showToast("Supabase 設定已儲存。", "success");
+async function loadOptionalLocalConfig() {
+  const runtime = window.ROOC_SUPABASE_CONFIG || {};
+  if (runtime.url && runtime.anonKey) return;
+
+  try {
+    await loadScript("config.local.js");
+  } catch {
+    // Local config is optional. Deployment config is generated into config.js.
+  }
 }
 
-function clearSettings() {
-  localStorage.removeItem(STORAGE_KEYS.url);
-  localStorage.removeItem(STORAGE_KEYS.anonKey);
-  $("#supabase-url").value = "";
-  $("#supabase-anon-key").value = "";
-  state.client = null;
-  renderConnection(false);
-  showToast("本機設定已清除。", "success");
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
 }
 
 async function handleLoadEvent(event) {
@@ -596,8 +590,7 @@ async function rpc(name, args) {
 
 function requireClient() {
   if (!state.client) {
-    switchTab("settings");
-    throw new Error("請先設定 Supabase。");
+    throw new Error("Supabase 尚未設定。請設定 SUPABASE_URL 與 SUPABASE_ANON_KEY。");
   }
   return state.client;
 }

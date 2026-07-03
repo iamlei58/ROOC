@@ -49,16 +49,28 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 
 第一次使用「成員」頁時，輸入一組成員管理 PIN。若尚未初始化，系統會建立；若已初始化，則會驗證該 PIN。
 
+## 設定方式
+
+前端不需要在畫面貼 Supabase 設定。正式部署時，GitHub Actions 會用 repo variables 產生 `config.js`。
+
+需要的變數：
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+`SUPABASE_ANON_KEY` 是公開前端金鑰，可以放在 GitHub Pages；資料庫密碼與 service role key 不可以。
+
 ## 本機使用
 
-直接用瀏覽器打開 `index.html`。
+複製 `.env.example` 為 `.env`，填入 Supabase 設定後產生本機設定檔：
 
-第一次使用時到「設定」填入：
+```bash
+php scripts/write-config.php
+```
 
-- Supabase Project URL
-- Supabase anon public key
+這會產生 `config.local.js`，該檔案已被 `.gitignore` 排除，不會被提交。
 
-設定會存在瀏覽器 localStorage。
+之後直接用瀏覽器打開 `index.html`。
 
 ## GitHub Pages 部署
 
@@ -69,22 +81,21 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
    - `SUPABASE_ANON_KEY`
 4. push 到 `rooc` 分支後，`Deploy GitHub Pages` workflow 會自動部署。
 
-如果沒有設定 repo variables，workflow 會使用 repo 內的 `config.js`。anon key 是公開前端金鑰，可以放在 GitHub Pages；service role key 不可以。
+如果沒有設定 repo variables，部署後會顯示尚未連線。
 
 ## 現場流程
 
-1. 到「設定」連上 Supabase。
-2. 到「成員」建立或登入成員管理 PIN。
-3. 新增/更新會員，或停用不參加的人。
-4. 到「活動/獎項」建立抽獎活動。
-5. 到「抽獎控制台」載入活動。
-6. 新增第一批獎項；現場加碼時可再新增。
-7. 選擇獎項後按「抽出」。
-8. 對抽出結果選擇：
+1. 到「成員」建立或登入成員管理 PIN。
+2. 新增/更新會員，或停用不參加的人。
+3. 到「活動/獎項」建立抽獎活動。
+4. 到「抽獎控制台」載入活動。
+5. 新增第一批獎項；現場加碼時可再新增。
+6. 選擇獎項後按「抽出」。
+7. 對抽出結果選擇：
    - 確認得獎
    - 放棄並重抽
    - 指定轉讓給另一個可收名單中的會員
-9. 活動結束後匯出 CSV。
+8. 活動結束後匯出 CSV。
 
 ## 檔案
 
@@ -92,5 +103,8 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 - `app.js`：Supabase 連線與抽獎互動流程
 - `styles.css`：介面樣式
 - `config.js`：部署時的公開 Supabase 設定
+- `config.local.js`：本機設定產物，已被 git 忽略
+- `.env.example`：本機設定範例
+- `scripts/write-config.php`：由 `.env` 產生 `config.local.js`
 - `supabase/schema.sql`：資料表、RLS、RPC
 - `.github/workflows/deploy-pages.yml`：GitHub Pages workflow

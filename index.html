@@ -40,10 +40,6 @@
           <i data-lucide="users"></i>
           <span>成員</span>
         </button>
-        <button class="tab" type="button" data-tab="settings">
-          <i data-lucide="database"></i>
-          <span>設定</span>
-        </button>
       </nav>
 
       <section class="toast" id="toast" hidden></section>
@@ -422,36 +418,6 @@
           </section>
         </section>
 
-        <section class="panel tab-panel" id="panel-settings" data-panel="settings" hidden>
-          <div class="panel-head">
-            <div>
-              <p class="section-label">Settings</p>
-              <h2>Supabase 設定</h2>
-            </div>
-            <span class="status-badge" id="settings-status">未設定</span>
-          </div>
-
-          <form class="info-block form-stack" id="settings-form">
-            <label>
-              <span>Project URL</span>
-              <input name="supabase_url" id="supabase-url" type="url" placeholder="https://project.supabase.co" required>
-            </label>
-            <label>
-              <span>Anon key</span>
-              <textarea name="supabase_anon_key" id="supabase-anon-key" rows="4" required></textarea>
-            </label>
-            <div class="button-row">
-              <button class="btn primary" type="submit">
-                <i data-lucide="save"></i>
-                <span>儲存</span>
-              </button>
-              <button class="btn secondary" type="button" id="clear-settings">
-                <i data-lucide="trash-2"></i>
-                <span>清除</span>
-              </button>
-            </div>
-          </form>
-        </section>
       </section>
     </main>
   </body>

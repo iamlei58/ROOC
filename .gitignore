@@ -1,2 +1,4 @@
 .agents/
 .codex/
+.env
+config.local.js
