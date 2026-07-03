@@ -27,6 +27,25 @@ create table if not exists public.rooc_members (
   check (role_id is null or char_length(role_id) <= 120)
 );
 
+create table if not exists public.rooc_occupations (
+  id uuid primary key default extensions.gen_random_uuid(),
+  name text not null unique,
+  is_active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (char_length(name) between 1 and 120)
+);
+
+insert into public.rooc_occupations (name, sort_order)
+select occupation, row_number() over (order by occupation)::integer
+from (
+  select distinct trim(occupation) as occupation
+  from public.rooc_members
+  where nullif(trim(occupation), '') is not null
+) existing_occupations
+on conflict on constraint rooc_occupations_name_key do nothing;
+
 create table if not exists public.raffle_events (
   id uuid primary key default extensions.gen_random_uuid(),
   slug text not null unique,
@@ -98,6 +117,7 @@ create index if not exists raffle_exclusions_event_member_idx
 
 alter table public.raffle_app_config enable row level security;
 alter table public.rooc_members enable row level security;
+alter table public.rooc_occupations enable row level security;
 alter table public.raffle_events enable row level security;
 alter table public.raffle_prizes enable row level security;
 alter table public.raffle_draws enable row level security;
@@ -208,6 +228,107 @@ begin
 end;
 $$;
 
+create or replace function public.get_rooc_occupations(
+  p_app_admin_pin text,
+  p_include_inactive boolean default false
+)
+returns table(
+  id uuid,
+  name text,
+  is_active boolean,
+  sort_order integer,
+  updated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  return query
+  select
+    o.id,
+    o.name,
+    o.is_active,
+    o.sort_order,
+    o.updated_at
+  from public.rooc_occupations o
+  where coalesce(p_include_inactive, false) or o.is_active
+  order by o.is_active desc, o.sort_order, o.name;
+end;
+$$;
+
+create or replace function public.upsert_rooc_occupation(
+  p_app_admin_pin text,
+  p_name text,
+  p_original_name text default null,
+  p_is_active boolean default true
+)
+returns table(
+  id uuid,
+  name text,
+  is_active boolean,
+  sort_order integer,
+  updated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_name text := nullif(trim(p_name), '');
+  v_original_name text := nullif(trim(p_original_name), '');
+  v_sort_order integer;
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  if v_name is null then
+    raise exception 'Occupation name is required.';
+  end if;
+
+  if v_original_name is not null and v_original_name <> v_name then
+    update public.rooc_occupations
+    set
+      name = v_name,
+      is_active = coalesce(p_is_active, true),
+      updated_at = now()
+    where public.rooc_occupations.name = v_original_name;
+
+    if not found then
+      raise exception 'Original occupation not found.';
+    end if;
+
+    update public.rooc_members
+    set
+      occupation = v_name,
+      updated_at = now()
+    where public.rooc_members.occupation = v_original_name;
+  else
+    select coalesce(max(o.sort_order), 0) + 1
+    into v_sort_order
+    from public.rooc_occupations o;
+
+    insert into public.rooc_occupations (name, is_active, sort_order, updated_at)
+    values (v_name, coalesce(p_is_active, true), v_sort_order, now())
+    on conflict on constraint rooc_occupations_name_key do update
+    set
+      is_active = excluded.is_active,
+      updated_at = now();
+  end if;
+
+  return query
+  select
+    o.id,
+    o.name,
+    o.is_active,
+    o.sort_order,
+    o.updated_at
+  from public.rooc_occupations o
+  where o.name = v_name;
+end;
+$$;
+
 create or replace function public.upsert_rooc_member(
   p_app_admin_pin text,
   p_member_no text,
@@ -233,12 +354,23 @@ set search_path = public, extensions, pg_temp
 as $$
 declare
   v_member_no text;
+  v_occupation text;
 begin
   perform public.assert_app_admin(p_app_admin_pin);
 
   v_member_no := nullif(trim(p_member_no), '');
+  v_occupation := nullif(trim(p_occupation), '');
   if v_member_no is null then
     raise exception 'Member number is required.';
+  end if;
+
+  if v_occupation is not null and not exists (
+    select 1
+    from public.rooc_occupations o
+    where o.name = v_occupation
+      and o.is_active
+  ) then
+    raise exception 'Occupation is not active.';
   end if;
 
   insert into public.rooc_members (
@@ -253,7 +385,7 @@ begin
   values (
     v_member_no,
     nullif(trim(p_display_name), ''),
-    nullif(trim(p_occupation), ''),
+    v_occupation,
     nullif(trim(p_role_id), ''),
     coalesce(p_joined_dc, false),
     coalesce(p_is_active, true),
@@ -972,6 +1104,7 @@ $$;
 
 revoke all on public.raffle_app_config from anon, authenticated;
 revoke all on public.rooc_members from anon, authenticated;
+revoke all on public.rooc_occupations from anon, authenticated;
 revoke all on public.raffle_events from anon, authenticated;
 revoke all on public.raffle_prizes from anon, authenticated;
 revoke all on public.raffle_draws from anon, authenticated;
@@ -982,6 +1115,8 @@ revoke execute on function public.member_label(public.rooc_members) from public,
 revoke execute on function public.assert_app_admin(text) from public, anon, authenticated;
 revoke execute on function public.validate_event_admin(text, text) from public, anon, authenticated;
 revoke execute on function public.initialize_app_admin(text) from public;
+revoke execute on function public.get_rooc_occupations(text, boolean) from public;
+revoke execute on function public.upsert_rooc_occupation(text, text, text, boolean) from public;
 revoke execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) from public;
 revoke execute on function public.set_rooc_member_active(text, text, boolean) from public;
 revoke execute on function public.get_rooc_members(text, text, boolean) from public;
@@ -994,6 +1129,8 @@ revoke execute on function public.resolve_raffle_draw(text, text, uuid, text, te
 
 grant usage on schema public to anon, authenticated;
 grant execute on function public.initialize_app_admin(text) to anon, authenticated;
+grant execute on function public.get_rooc_occupations(text, boolean) to anon, authenticated;
+grant execute on function public.upsert_rooc_occupation(text, text, text, boolean) to anon, authenticated;
 grant execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) to anon, authenticated;
 grant execute on function public.set_rooc_member_active(text, text, boolean) to anon, authenticated;
 grant execute on function public.get_rooc_members(text, text, boolean) to anon, authenticated;

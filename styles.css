@@ -406,6 +406,11 @@ textarea:focus {
   padding: 18px;
 }
 
+.split-layout + .table-card,
+.table-card + .table-card {
+  margin-top: 18px;
+}
+
 .draw-station {
   display: grid;
   gap: 16px;

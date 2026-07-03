@@ -360,7 +360,9 @@
               <div class="field-row">
                 <label>
                   <span>職業</span>
-                  <input name="occupation" maxlength="120">
+                  <select name="occupation" id="member-occupation">
+                    <option value="">未設定</option>
+                  </select>
                 </label>
                 <label>
                   <span>角色 ID</span>
@@ -383,6 +385,40 @@
               </button>
             </form>
           </div>
+
+          <section class="table-card">
+            <div class="table-head with-form">
+              <h3>職業管理</h3>
+              <form class="inline-form" id="occupation-form">
+                <input name="original_name" id="occupation-original-name" type="hidden">
+                <input name="name" autocomplete="off" maxlength="120" placeholder="新增或修改職業名稱" required>
+                <label class="inline-check">
+                  <input name="is_active" type="checkbox" checked>
+                  <span>啟用</span>
+                </label>
+                <button class="btn primary" type="submit">
+                  <i data-lucide="save"></i>
+                  <span>儲存</span>
+                </button>
+                <button class="btn secondary" type="button" id="clear-occupation-edit">
+                  <i data-lucide="x"></i>
+                  <span>清除</span>
+                </button>
+              </form>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>職業</th>
+                    <th>狀態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="occupation-table"></tbody>
+              </table>
+            </div>
+          </section>
 
           <section class="table-card">
             <div class="table-head with-form">

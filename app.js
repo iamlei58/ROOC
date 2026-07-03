@@ -7,6 +7,7 @@ const state = {
   event: null,
   eventPin: "",
   appAdminPin: "",
+  occupations: [],
   members: []
 };
 
@@ -70,6 +71,8 @@ function bindForms() {
   $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
   $("#export-awards").addEventListener("click", exportAwardsCsv);
   $("#app-admin-form").addEventListener("submit", handleAppAdmin);
+  $("#occupation-form").addEventListener("submit", handleOccupationSave);
+  $("#clear-occupation-edit").addEventListener("click", clearOccupationEdit);
   $("#member-form").addEventListener("submit", handleMemberSave);
   $("#member-search-form").addEventListener("submit", handleMemberSearch);
 }
@@ -440,9 +443,119 @@ async function handleAppAdmin(event) {
     await rpc("initialize_app_admin", { p_admin_pin: pin });
     state.appAdminPin = pin;
     $("#member-status").textContent = "已驗證";
+    await loadOccupations();
     await loadMembers();
     showToast("成員管理 PIN 已套用。", "success");
   });
+}
+
+async function handleOccupationSave(event) {
+  event.preventDefault();
+  const data = new FormData(event.currentTarget);
+
+  await withBusy(event.currentTarget, async () => {
+    requireAppAdmin();
+    await rpc("upsert_rooc_occupation", {
+      p_app_admin_pin: state.appAdminPin,
+      p_name: data.get("name"),
+      p_original_name: data.get("original_name"),
+      p_is_active: data.get("is_active") === "on"
+    });
+    clearOccupationEdit();
+    await loadOccupations();
+    await loadMembers();
+    showToast("職業已儲存。", "success");
+  });
+}
+
+async function loadOccupations() {
+  const rows = await rpc("get_rooc_occupations", {
+    p_app_admin_pin: state.appAdminPin,
+    p_include_inactive: true
+  });
+  state.occupations = rows || [];
+  renderOccupations();
+  renderOccupationOptions();
+}
+
+function renderOccupations() {
+  const body = $("#occupation-table");
+  body.innerHTML = "";
+
+  if (state.occupations.length === 0) {
+    appendEmptyRow(body, 3, "尚未建立職業。");
+    return;
+  }
+
+  state.occupations.forEach((occupation) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${escapeHtml(occupation.name)}</td>
+      <td>${occupation.is_active ? "啟用" : "停用"}</td>
+      <td>
+        <button class="btn table-action" type="button" data-edit-occupation="${escapeHtml(occupation.name)}" data-active="${occupation.is_active ? "1" : "0"}">
+          編輯
+        </button>
+        <button class="btn table-action" type="button" data-toggle-occupation="${escapeHtml(occupation.name)}" data-active="${occupation.is_active ? "0" : "1"}">
+          ${occupation.is_active ? "停用" : "啟用"}
+        </button>
+      </td>
+    `;
+    body.appendChild(row);
+  });
+
+  $all("[data-edit-occupation]").forEach((button) => {
+    button.addEventListener("click", () => editOccupation(button.dataset.editOccupation, button.dataset.active === "1"));
+  });
+  $all("[data-toggle-occupation]").forEach((button) => {
+    button.addEventListener("click", () => toggleOccupation(button.dataset.toggleOccupation, button.dataset.active === "1"));
+  });
+}
+
+function renderOccupationOptions() {
+  const select = $("#member-occupation");
+  const current = select.value;
+  select.innerHTML = "";
+  select.append(new Option("未設定", ""));
+
+  state.occupations
+    .filter((occupation) => occupation.is_active)
+    .forEach((occupation) => {
+      select.append(new Option(occupation.name, occupation.name));
+    });
+
+  if (current && state.occupations.some((occupation) => occupation.name === current && occupation.is_active)) {
+    select.value = current;
+  }
+}
+
+function editOccupation(name, isActive) {
+  const form = $("#occupation-form");
+  form.elements.original_name.value = name;
+  form.elements.name.value = name;
+  form.elements.is_active.checked = isActive;
+  form.elements.name.focus();
+}
+
+async function toggleOccupation(name, isActive) {
+  await withBusy($("#occupation-table"), async () => {
+    requireAppAdmin();
+    await rpc("upsert_rooc_occupation", {
+      p_app_admin_pin: state.appAdminPin,
+      p_name: name,
+      p_original_name: name,
+      p_is_active: isActive
+    });
+    await loadOccupations();
+    showToast(isActive ? "職業已啟用。" : "職業已停用。", "success");
+  });
+}
+
+function clearOccupationEdit() {
+  const form = $("#occupation-form");
+  form.reset();
+  form.elements.original_name.value = "";
+  form.elements.is_active.checked = true;
 }
 
 async function handleMemberSave(event) {
@@ -462,6 +575,7 @@ async function handleMemberSave(event) {
     });
     event.currentTarget.reset();
     event.currentTarget.elements.is_active.checked = true;
+    event.currentTarget.elements.occupation.value = "";
     await loadMembers();
     showToast("成員已儲存。", "success");
   });
