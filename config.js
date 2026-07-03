@@ -1,4 +1,4 @@
 window.ROOC_SUPABASE_CONFIG = {
-  url: "",
+  url: "https://euzosifslqchutznteqc.supabase.co",
   anonKey: ""
 };

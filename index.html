@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ROOC 抽獎系統</title>
+    <title>ROOC 抽獎控制台</title>
     <link rel="icon" href="assets/raffle-mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <script src="config.js"></script>
@@ -17,8 +17,8 @@
         <div class="brand">
           <img class="brand-mark" src="assets/raffle-mark.svg" alt="">
           <div>
-            <p class="eyebrow">Supabase + GitHub Pages</p>
-            <h1>ROOC 抽獎系統</h1>
+            <p class="eyebrow">Member Pool Raffle</p>
+            <h1>ROOC 抽獎控制台</h1>
           </div>
         </div>
         <div class="connection-pill" id="connection-pill">
@@ -28,13 +28,17 @@
       </header>
 
       <nav class="tabs" aria-label="主要功能">
-        <button class="tab is-active" type="button" data-tab="join">
-          <i data-lucide="ticket"></i>
-          <span>參加抽獎</span>
+        <button class="tab is-active" type="button" data-tab="console">
+          <i data-lucide="sparkles"></i>
+          <span>抽獎控制台</span>
         </button>
-        <button class="tab" type="button" data-tab="admin">
-          <i data-lucide="settings-2"></i>
-          <span>建立/管理</span>
+        <button class="tab" type="button" data-tab="event">
+          <i data-lucide="gift"></i>
+          <span>活動/獎項</span>
+        </button>
+        <button class="tab" type="button" data-tab="members">
+          <i data-lucide="users"></i>
+          <span>成員</span>
         </button>
         <button class="tab" type="button" data-tab="settings">
           <i data-lucide="database"></i>
@@ -45,221 +49,377 @@
       <section class="toast" id="toast" hidden></section>
 
       <section class="workspace">
-        <section class="panel tab-panel is-active" id="panel-join" data-panel="join">
+        <section class="panel tab-panel is-active" id="panel-console" data-panel="console">
           <div class="panel-head">
             <div>
-              <p class="section-label">Public</p>
-              <h2>參加抽獎</h2>
+              <p class="section-label">Live Draw</p>
+              <h2>抽獎控制台</h2>
             </div>
-            <span class="status-badge" id="public-status">等待查詢</span>
+            <span class="status-badge" id="console-status">未載入</span>
           </div>
 
-          <form class="toolbar-form" id="lookup-form">
+          <form class="toolbar-form" id="load-event-form">
             <label>
-              <span>抽獎代碼</span>
-              <input name="slug" id="lookup-slug" autocomplete="off" placeholder="summer-gift">
+              <span>活動代碼</span>
+              <input name="slug" id="event-slug" autocomplete="off" placeholder="rooc-2026">
+            </label>
+            <label>
+              <span>活動 PIN</span>
+              <input name="admin_pin" id="event-pin" type="password" autocomplete="current-password">
             </label>
             <button class="btn primary" type="submit">
-              <i data-lucide="search"></i>
-              <span>查詢</span>
+              <i data-lucide="log-in"></i>
+              <span>載入</span>
             </button>
           </form>
 
-          <div class="empty-state" id="public-empty">
+          <div class="empty-state" id="console-empty">
             <img src="assets/raffle-mark.svg" alt="">
-            <p>尚未載入抽獎。</p>
+            <p>載入活動後開始抽獎。</p>
           </div>
 
-          <div class="detail-grid" id="public-detail" hidden>
-            <section class="info-block">
-              <div class="block-head">
-                <div>
-                  <p class="section-label">Raffle</p>
-                  <h3 id="public-title"></h3>
-                </div>
-                <span class="status-badge" id="public-detail-status"></span>
+          <div class="console-detail" id="console-detail" hidden>
+            <section class="stats-grid">
+              <div>
+                <dt>啟用成員</dt>
+                <dd id="stat-active-members">0</dd>
               </div>
-              <p class="description" id="public-description"></p>
-              <dl class="stats">
-                <div>
-                  <dt>參加人數</dt>
-                  <dd id="public-count">0</dd>
-                </div>
-                <div>
-                  <dt>名額</dt>
-                  <dd id="public-winners-count">1</dd>
-                </div>
-                <div>
-                  <dt>開獎時間</dt>
-                  <dd id="public-drawn-at">尚未開獎</dd>
-                </div>
-              </dl>
-              <div class="winner-strip" id="public-winners" hidden></div>
+              <div>
+                <dt>可抽名單</dt>
+                <dd id="stat-eligible">0</dd>
+              </div>
+              <div>
+                <dt>已排除</dt>
+                <dd id="stat-excluded">0</dd>
+              </div>
+              <div>
+                <dt>已發獎</dt>
+                <dd id="stat-awards">0</dd>
+              </div>
             </section>
 
-            <form class="info-block form-stack" id="join-form">
-              <div class="block-head compact">
-                <div>
-                  <p class="section-label">Entry</p>
-                  <h3>報名資料</h3>
+            <div class="board-grid">
+              <section class="info-block draw-station">
+                <div class="block-head">
+                  <div>
+                    <p class="section-label">Draw</p>
+                    <h3 id="event-title">尚未載入</h3>
+                  </div>
+                  <span class="status-badge" id="event-status-badge">未載入</span>
                 </div>
+
+                <div class="draw-controls">
+                  <label>
+                    <span>選擇獎項</span>
+                    <select id="draw-prize-select"></select>
+                  </label>
+                  <button class="btn accent" type="button" id="draw-prize">
+                    <i data-lucide="dice-5"></i>
+                    <span>抽出</span>
+                  </button>
+                </div>
+
+                <div class="pending-card" id="pending-card" hidden>
+                  <p class="section-label">Pending</p>
+                  <h3 id="pending-member">等待處理</h3>
+                  <p class="description" id="pending-detail"></p>
+                  <div class="button-row">
+                    <button class="btn primary" type="button" id="accept-draw">
+                      <i data-lucide="check"></i>
+                      <span>確認得獎</span>
+                    </button>
+                    <button class="btn secondary" type="button" id="decline-draw">
+                      <i data-lucide="rotate-ccw"></i>
+                      <span>放棄並重抽</span>
+                    </button>
+                  </div>
+                  <form class="transfer-form" id="transfer-form">
+                    <label>
+                      <span>指定轉讓給會員編號</span>
+                      <input name="member_no" autocomplete="off" placeholder="M0001">
+                    </label>
+                    <label>
+                      <span>備註</span>
+                      <input name="note" autocomplete="off" placeholder="現場指定">
+                    </label>
+                    <button class="btn secondary" type="submit">
+                      <i data-lucide="move-right"></i>
+                      <span>指定轉讓</span>
+                    </button>
+                  </form>
+                </div>
+
+                <div class="button-row console-actions">
+                  <button class="btn secondary" type="button" id="refresh-event">
+                    <i data-lucide="refresh-cw"></i>
+                    <span>刷新</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="export-awards">
+                    <i data-lucide="download"></i>
+                    <span>匯出 CSV</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="reopen-event">
+                    <i data-lucide="unlock"></i>
+                    <span>重新開放</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="close-event">
+                    <i data-lucide="lock"></i>
+                    <span>結束活動</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="info-block form-stack">
+                <div class="block-head compact">
+                  <div>
+                    <p class="section-label">Bonus</p>
+                    <h3>加碼獎項</h3>
+                  </div>
+                </div>
+                <form class="form-stack" id="add-prize-form">
+                  <label>
+                    <span>獎項名稱</span>
+                    <input name="name" maxlength="120" required placeholder="Steam 禮物卡">
+                  </label>
+                  <label>
+                    <span>提供者</span>
+                    <input name="provider" maxlength="120" required placeholder="ROOC 團隊">
+                  </label>
+                  <label>
+                    <span>名額</span>
+                    <input name="quantity" type="number" min="1" max="200" value="1" required>
+                  </label>
+                  <button class="btn primary full" type="submit">
+                    <i data-lucide="plus"></i>
+                    <span>新增/加碼</span>
+                  </button>
+                </form>
+              </section>
+            </div>
+
+            <section class="table-card">
+              <div class="table-head">
+                <h3>獎項佇列</h3>
               </div>
-              <label>
-                <span>姓名</span>
-                <input name="display_name" autocomplete="name" required maxlength="80">
-              </label>
-              <label>
-                <span>Email</span>
-                <input name="email" type="email" autocomplete="email" maxlength="160">
-              </label>
-              <label>
-                <span>備註</span>
-                <textarea name="note" rows="3" maxlength="240"></textarea>
-              </label>
-              <button class="btn primary full" type="submit">
-                <i data-lucide="send"></i>
-                <span>送出報名</span>
-              </button>
-            </form>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>獎項</th>
+                      <th>提供者</th>
+                      <th>名額</th>
+                      <th>已完成</th>
+                      <th>剩餘</th>
+                    </tr>
+                  </thead>
+                  <tbody id="prize-table"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <div class="history-grid">
+              <section class="table-card">
+                <div class="table-head">
+                  <h3>中獎名單</h3>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>獎項</th>
+                        <th>原抽中者</th>
+                        <th>領獎者</th>
+                        <th>狀態</th>
+                        <th>時間</th>
+                      </tr>
+                    </thead>
+                    <tbody id="award-table"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="table-card">
+                <div class="table-head">
+                  <h3>抽獎紀錄</h3>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>獎項</th>
+                        <th>抽中</th>
+                        <th>結果</th>
+                        <th>Token</th>
+                      </tr>
+                    </thead>
+                    <tbody id="draw-log-table"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
           </div>
         </section>
 
-        <section class="panel tab-panel" id="panel-admin" data-panel="admin" hidden>
+        <section class="panel tab-panel" id="panel-event" data-panel="event" hidden>
           <div class="panel-head">
             <div>
-              <p class="section-label">Admin</p>
-              <h2>建立/管理</h2>
+              <p class="section-label">Event</p>
+              <h2>活動設定</h2>
             </div>
-            <span class="status-badge" id="admin-status">未載入</span>
+            <span class="status-badge">活動 PIN 保護</span>
           </div>
 
           <div class="split-layout">
-            <form class="info-block form-stack" id="create-form">
+            <form class="info-block form-stack" id="create-event-form">
               <div class="block-head compact">
                 <div>
                   <p class="section-label">Create</p>
-                  <h3>建立抽獎</h3>
+                  <h3>建立抽獎活動</h3>
                 </div>
               </div>
               <label>
                 <span>活動名稱</span>
-                <input name="title" required maxlength="120" placeholder="夏季會員禮">
+                <input name="title" required maxlength="120" placeholder="ROOC 七月會員抽獎">
               </label>
               <label>
-                <span>抽獎代碼</span>
-                <input name="slug" autocomplete="off" maxlength="80" placeholder="summer-gift">
+                <span>活動代碼</span>
+                <input name="slug" autocomplete="off" maxlength="80" placeholder="rooc-july">
               </label>
               <label>
                 <span>活動說明</span>
                 <textarea name="description" rows="4" maxlength="1200"></textarea>
               </label>
-              <div class="field-row">
-                <label>
-                  <span>中獎名額</span>
-                  <input name="winners_count" type="number" min="1" max="100" value="1" required>
-                </label>
-                <label>
-                  <span>管理 PIN</span>
-                  <input name="admin_pin" type="password" minlength="4" maxlength="80" required>
-                </label>
-              </div>
-              <div class="field-row">
-                <label>
-                  <span>開始時間</span>
-                  <input name="starts_at" type="datetime-local">
-                </label>
-                <label>
-                  <span>結束時間</span>
-                  <input name="ends_at" type="datetime-local">
-                </label>
-              </div>
+              <label>
+                <span>活動 PIN</span>
+                <input name="admin_pin" type="password" minlength="4" maxlength="80" required>
+              </label>
               <button class="btn primary full" type="submit">
                 <i data-lucide="plus"></i>
-                <span>建立</span>
+                <span>建立活動</span>
               </button>
             </form>
 
+            <section class="info-block">
+              <div class="block-head compact">
+                <div>
+                  <p class="section-label">Rules</p>
+                  <h3>目前規則</h3>
+                </div>
+              </div>
+              <ul class="rule-list">
+                <li>參加者來自 `rooc_members` 啟用成員。</li>
+                <li>同一場活動中，每個人最多被處理一次。</li>
+                <li>放棄、確認得獎、指定轉讓者都會進入排除名單。</li>
+                <li>轉讓對象必須是尚未排除且啟用中的會員。</li>
+                <li>獎項可在抽獎過程中隨時新增加碼。</li>
+              </ul>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel tab-panel" id="panel-members" data-panel="members" hidden>
+          <div class="panel-head">
+            <div>
+              <p class="section-label">Members</p>
+              <h2>成員資料</h2>
+            </div>
+            <span class="status-badge" id="member-status">未載入</span>
+          </div>
+
+          <div class="split-layout">
             <section class="info-block form-stack">
               <div class="block-head compact">
                 <div>
-                  <p class="section-label">Manage</p>
-                  <h3>管理抽獎</h3>
+                  <p class="section-label">Admin</p>
+                  <h3>成員管理 PIN</h3>
                 </div>
               </div>
-              <form class="form-stack" id="manage-form">
+              <form class="form-stack" id="app-admin-form">
                 <label>
-                  <span>抽獎代碼</span>
-                  <input name="slug" id="manage-slug" autocomplete="off" required>
-                </label>
-                <label>
-                  <span>管理 PIN</span>
-                  <input name="admin_pin" id="manage-pin" type="password" required>
+                  <span>首次設定或登入 PIN</span>
+                  <input name="app_admin_pin" id="app-admin-pin" type="password" minlength="4" maxlength="80" required>
                 </label>
                 <button class="btn secondary full" type="submit">
-                  <i data-lucide="lock-keyhole"></i>
-                  <span>載入</span>
+                  <i data-lucide="shield-check"></i>
+                  <span>套用</span>
                 </button>
               </form>
+            </section>
 
-              <div class="admin-detail" id="admin-detail" hidden>
-                <div class="admin-title-row">
-                  <div>
-                    <p class="section-label">Current</p>
-                    <h3 id="admin-title"></h3>
-                  </div>
-                  <span class="status-badge" id="admin-detail-status"></span>
-                </div>
-                <dl class="stats compact-stats">
-                  <div>
-                    <dt>參加人數</dt>
-                    <dd id="admin-count">0</dd>
-                  </div>
-                  <div>
-                    <dt>名額</dt>
-                    <dd id="admin-winners-count">1</dd>
-                  </div>
-                  <div>
-                    <dt>開獎</dt>
-                    <dd id="admin-drawn-at">未開獎</dd>
-                  </div>
-                </dl>
-                <div class="button-row">
-                  <button class="btn secondary" type="button" id="open-raffle">
-                    <i data-lucide="unlock"></i>
-                    <span>開放</span>
-                  </button>
-                  <button class="btn secondary" type="button" id="close-raffle">
-                    <i data-lucide="lock"></i>
-                    <span>關閉</span>
-                  </button>
-                  <button class="btn accent" type="button" id="draw-raffle">
-                    <i data-lucide="sparkles"></i>
-                    <span>開獎</span>
-                  </button>
-                </div>
-                <div class="share-box">
-                  <input id="share-link" readonly>
-                  <button class="btn icon-only" type="button" id="copy-link" aria-label="複製連結">
-                    <i data-lucide="copy"></i>
-                  </button>
-                </div>
-                <div class="winner-strip" id="admin-winners" hidden></div>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>姓名</th>
-                        <th>Email</th>
-                        <th>備註</th>
-                        <th>時間</th>
-                      </tr>
-                    </thead>
-                    <tbody id="participant-table"></tbody>
-                  </table>
+            <form class="info-block form-stack" id="member-form">
+              <div class="block-head compact">
+                <div>
+                  <p class="section-label">Upsert</p>
+                  <h3>新增/更新成員</h3>
                 </div>
               </div>
-            </section>
+              <label>
+                <span>編號</span>
+                <input name="member_no" autocomplete="off" required maxlength="80" placeholder="M0001">
+              </label>
+              <label>
+                <span>顯示名稱</span>
+                <input name="display_name" maxlength="120" placeholder="可留空，預設使用編號">
+              </label>
+              <div class="field-row">
+                <label>
+                  <span>職業</span>
+                  <input name="occupation" maxlength="120">
+                </label>
+                <label>
+                  <span>角色 ID</span>
+                  <input name="role_id" maxlength="120">
+                </label>
+              </div>
+              <div class="check-row">
+                <label>
+                  <input name="joined_dc" type="checkbox">
+                  <span>已加入 DC</span>
+                </label>
+                <label>
+                  <input name="is_active" type="checkbox" checked>
+                  <span>啟用</span>
+                </label>
+              </div>
+              <button class="btn primary full" type="submit">
+                <i data-lucide="save"></i>
+                <span>儲存成員</span>
+              </button>
+            </form>
           </div>
+
+          <section class="table-card">
+            <div class="table-head with-form">
+              <h3>成員列表</h3>
+              <form class="inline-form" id="member-search-form">
+                <input name="query" autocomplete="off" placeholder="搜尋編號、職業、角色">
+                <label class="inline-check">
+                  <input name="include_inactive" type="checkbox">
+                  <span>含停用</span>
+                </label>
+                <button class="btn secondary" type="submit">
+                  <i data-lucide="search"></i>
+                  <span>搜尋</span>
+                </button>
+              </form>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>編號</th>
+                    <th>名稱</th>
+                    <th>職業</th>
+                    <th>角色 ID</th>
+                    <th>DC</th>
+                    <th>狀態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="member-table"></tbody>
+              </table>
+            </div>
+          </section>
         </section>
 
         <section class="panel tab-panel" id="panel-settings" data-panel="settings" hidden>

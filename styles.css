@@ -32,6 +32,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -45,8 +46,13 @@ button:disabled {
   opacity: 0.58;
 }
 
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.85rem;
+}
+
 .app-shell {
-  width: min(1160px, calc(100% - 32px));
+  width: min(1220px, calc(100% - 32px));
   margin: 0 auto;
   padding: 24px 0 48px;
 }
@@ -104,7 +110,7 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: 3.8rem;
+  font-size: 3.6rem;
   line-height: 1;
 }
 
@@ -115,7 +121,7 @@ h2 {
 
 h3 {
   margin-bottom: 0;
-  font-size: 1.1rem;
+  font-size: 1.08rem;
 }
 
 .connection-pill,
@@ -224,9 +230,9 @@ h3 {
   width: 100%;
 }
 
-.btn.icon-only {
-  width: 44px;
-  padding: 0;
+.btn.table-action {
+  min-height: 34px;
+  padding: 6px 10px;
   color: var(--text);
   background: #ffffff;
   border-color: var(--line);
@@ -274,7 +280,7 @@ h3 {
 
 .panel-head,
 .block-head,
-.admin-title-row {
+.table-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -288,7 +294,7 @@ h3 {
 
 .toolbar-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.6fr) auto;
   gap: 12px;
   align-items: end;
   margin-bottom: 18px;
@@ -303,11 +309,13 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
+  min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 11px 12px;
+  padding: 10px 12px;
   color: var(--text);
   background: #ffffff;
   outline: none;
@@ -319,6 +327,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 4px rgba(8, 127, 140, 0.13);
@@ -342,58 +351,97 @@ textarea:focus {
   height: 76px;
 }
 
-.detail-grid,
-.split-layout {
+.console-detail {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
   gap: 18px;
-  align-items: start;
 }
 
-.info-block {
-  min-width: 0;
-  padding: 18px;
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stats-grid div,
+.info-block,
+.table-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
 }
 
-.description {
-  min-height: 48px;
-  color: var(--muted);
-  line-height: 1.7;
+.stats-grid div {
+  padding: 15px;
 }
 
-.stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 18px 0 0;
-}
-
-.stats div {
-  min-width: 0;
-  padding: 13px;
-  border-radius: 8px;
-  background: var(--surface-2);
-}
-
-.stats dt {
+.stats-grid dt {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
 }
 
-.stats dd {
+.stats-grid dd {
   margin: 6px 0 0;
-  font-size: 1.15rem;
+  font-size: 1.55rem;
   font-weight: 900;
-  overflow-wrap: anywhere;
 }
 
-.compact-stats {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-bottom: 16px;
+.board-grid,
+.split-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.info-block,
+.table-card {
+  min-width: 0;
+  padding: 18px;
+}
+
+.draw-station {
+  display: grid;
+  gap: 16px;
+}
+
+.draw-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.pending-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(217, 93, 57, 0.3);
+  border-radius: 8px;
+  background: #fff6f2;
+}
+
+.description {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.transfer-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.console-actions {
+  padding-top: 4px;
 }
 
 .form-stack {
@@ -407,50 +455,54 @@ textarea:focus {
   gap: 12px;
 }
 
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.check-row label,
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row input,
+.inline-check input {
+  width: 18px;
+  min-height: 18px;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.share-box {
+.rule-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin: 16px 0;
-}
-
-.winner-strip {
-  display: flex;
-  flex-wrap: wrap;
   gap: 10px;
-  margin-top: 16px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.7;
 }
 
-.winner-chip {
-  display: inline-flex;
+.table-head.with-form {
+  align-items: end;
+}
+
+.inline-form {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 9px 12px;
-  border-radius: 999px;
-  color: #4b3000;
-  background: #fff3c8;
+  gap: 10px;
+  min-width: min(620px, 100%);
 }
 
-.winner-rank {
-  display: inline-grid;
-  place-items: center;
-  min-width: 30px;
-  height: 24px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: var(--gold);
-  font-weight: 900;
-}
-
-.admin-detail {
-  padding-top: 4px;
+.inline-form input[type="text"],
+.inline-form input:not([type]) {
+  min-width: 240px;
 }
 
 .table-wrap {
@@ -463,7 +515,7 @@ textarea:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 680px;
+  min-width: 720px;
 }
 
 th,
@@ -490,16 +542,17 @@ tr:last-child td {
   text-align: center;
 }
 
-@media (max-width: 840px) {
+@media (max-width: 920px) {
   .app-shell {
-    width: min(100% - 20px, 1160px);
+    width: min(100% - 20px, 1220px);
     padding-top: 10px;
   }
 
   .hero,
   .panel-head,
   .block-head,
-  .admin-title-row {
+  .table-head,
+  .table-head.with-form {
     align-items: stretch;
     flex-direction: column;
   }
@@ -519,7 +572,7 @@ tr:last-child td {
   }
 
   h1 {
-    font-size: 2.25rem;
+    font-size: 2.2rem;
   }
 
   .tabs {
@@ -527,7 +580,7 @@ tr:last-child td {
   }
 
   .tab {
-    min-width: 132px;
+    min-width: 138px;
   }
 
   .panel {
@@ -535,11 +588,23 @@ tr:last-child td {
   }
 
   .toolbar-form,
-  .detail-grid,
+  .stats-grid,
+  .board-grid,
   .split-layout,
+  .history-grid,
   .field-row,
-  .stats,
-  .compact-stats {
+  .draw-controls,
+  .transfer-form {
     grid-template-columns: 1fr;
+  }
+
+  .inline-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inline-form input[type="text"],
+  .inline-form input:not([type]) {
+    min-width: 0;
   }
 }
