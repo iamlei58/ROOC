@@ -882,6 +882,59 @@ begin
 end;
 $$;
 
+create or replace function public.delete_raffle_prize(
+  p_slug text,
+  p_admin_pin text,
+  p_prize_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event public.raffle_events%rowtype;
+  v_prize public.raffle_prizes%rowtype;
+begin
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
+
+  if v_event.status <> 'live' then
+    raise exception '活動已關閉，不能刪除獎項。';
+  end if;
+
+  if p_prize_id is null then
+    raise exception '請選擇要刪除的獎項。';
+  end if;
+
+  select *
+  into v_prize
+  from public.raffle_prizes p
+  where p.id = p_prize_id
+    and p.event_id = v_event.id
+    and p.is_active
+  for update;
+
+  if not found then
+    raise exception '找不到要刪除的獎項。';
+  end if;
+
+  if exists (
+    select 1
+    from public.raffle_draws d
+    where d.prize_id = v_prize.id
+  ) then
+    raise exception '此獎項已有抽獎紀錄，不能刪除。';
+  end if;
+
+  delete from public.raffle_prizes p
+  where p.id = v_prize.id;
+end;
+$$;
+
 create or replace function public.get_raffle_event_admin(
   p_slug text,
   p_admin_pin text
@@ -1541,6 +1594,7 @@ revoke execute on function public.set_raffle_event_status(text, text, text) from
 revoke execute on function public.delete_raffle_event(text, text) from public;
 revoke execute on function public.add_raffle_prize(text, text, text, text, integer) from public;
 revoke execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) from public;
+revoke execute on function public.delete_raffle_prize(text, text, uuid) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
 revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
 revoke execute on function public.get_raffle_transfer_candidates(text, text) from public;
@@ -1562,6 +1616,7 @@ grant execute on function public.set_raffle_event_status(text, text, text) to an
 grant execute on function public.delete_raffle_event(text, text) to anon, authenticated;
 grant execute on function public.add_raffle_prize(text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) to anon, authenticated;
+grant execute on function public.delete_raffle_prize(text, text, uuid) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_transfer_candidates(text, text) to anon, authenticated;

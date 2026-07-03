@@ -1106,6 +1106,8 @@ function renderPrizeRows(selector, prizes, emptyMessage, options = {}) {
     const row = document.createElement("tr");
     const atLimit = Number(prize.quantity || 0) >= 200;
     const canBonus = options.actions && state.event?.status === "live" && !atLimit;
+    const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
+    const canDelete = options.actions && state.event?.status === "live" && drawCount === 0;
     row.innerHTML = `
       <td>${escapeHtml(prize.name)}</td>
       <td>${escapeHtml(prize.provider)}</td>
@@ -1117,6 +1119,10 @@ function renderPrizeRows(selector, prizes, emptyMessage, options = {}) {
           <button class="btn table-action" type="button" data-prize-action="bonus" data-prize-id="${escapeHtml(prize.id)}" ${canBonus ? "" : "disabled"}>
             <i data-lucide="plus"></i>
             <span>加碼</span>
+          </button>
+          <button class="btn table-action danger-action" type="button" data-prize-action="delete" data-prize-id="${escapeHtml(prize.id)}" ${canDelete ? "" : "disabled"}>
+            <i data-lucide="trash-2"></i>
+            <span>刪除</span>
           </button>
         </td>
       ` : ""}
@@ -1132,6 +1138,40 @@ function handlePrizeTableAction(event) {
   if (button.dataset.prizeAction === "bonus") {
     openBonusPrizeDialog(button.dataset.prizeId || "");
   }
+
+  if (button.dataset.prizeAction === "delete") {
+    void deletePrize(button.dataset.prizeId || "");
+  }
+}
+
+async function deletePrize(prizeId) {
+  const prize = state.event?.prizes?.find((item) => item.id === prizeId);
+  if (!prize) {
+    showToast("找不到這個獎項。", "error");
+    return;
+  }
+
+  const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
+  if (drawCount > 0) {
+    showToast("此獎項已有抽獎紀錄，不能刪除。", "error");
+    return;
+  }
+
+  if (!window.confirm(`確定要刪除「${prize.name}」嗎？`)) {
+    return;
+  }
+
+  await withBusy($("#prize-table"), async () => {
+    ensureEventLoaded();
+    await ensureAppAdminPin();
+    await rpc("delete_raffle_prize", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin,
+      p_prize_id: prizeId
+    });
+    await loadEvent(state.event.slug);
+    showToast("獎項已刪除。", "success");
+  });
 }
 
 function renderAwards() {
@@ -2671,6 +2711,8 @@ function friendlyError(message) {
   if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元") || text.includes("管理密碼至少需要 4 個字元")) return "管理密碼至少需要 4 個字元。";
   if (text.includes("Raffle event not found") || text.includes("找不到活動")) return "找不到活動。";
   if (text.includes("Raffle event title already exists") || text.includes("活動名稱已存在")) return "活動名稱已存在。";
+  if (text.includes("此獎項已有抽獎紀錄，不能刪除")) return "此獎項已有抽獎紀錄，不能刪除。";
+  if (text.includes("找不到要刪除的獎項")) return "找不到要刪除的獎項。";
   if (text.includes("Member number already exists") || text.includes("成員編號已存在")) return "成員編號已存在。";
   if (text.includes("Member number is required") || text.includes("請輸入成員編號")) return "請輸入成員編號。";
   if (text.includes("Role name is required") || text.includes("請輸入角色名稱")) return "請輸入角色名稱。";

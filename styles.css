@@ -275,6 +275,17 @@ h3 {
   border-color: var(--line);
 }
 
+.btn.table-action.danger-action {
+  color: #9a3a34;
+  border-color: rgba(194, 65, 58, 0.25);
+  background: rgba(194, 65, 58, 0.08);
+}
+
+.btn.table-action.danger-action:hover:not(:disabled) {
+  color: #ffffff;
+  background: var(--red);
+}
+
 td .btn.table-action + .btn.table-action {
   margin-left: 6px;
 }
