@@ -3,11 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ROOC 抽獎控制台</title>
-    <link rel="icon" href="assets/raffle-mark.svg" type="image/svg+xml">
+    <title>ROOC 星辰</title>
+    <link rel="icon" href="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css">
     <link rel="stylesheet" href="styles.css">
     <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/fireworks-js@2.10.8/dist/index.umd.js"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script defer src="app.js"></script>
   </head>
@@ -15,10 +20,10 @@
     <main class="app-shell">
       <header class="hero">
         <div class="brand">
-          <img class="brand-mark" src="assets/raffle-mark.svg" alt="">
+          <img class="brand-mark" src="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" alt="">
           <div>
-            <p class="eyebrow">Member Pool Raffle</p>
-            <h1>ROOC 抽獎控制台</h1>
+            <p class="eyebrow">Ragnarok Origin Classic</p>
+            <h1>星辰</h1>
           </div>
         </div>
         <div class="connection-pill" id="connection-pill">
@@ -32,9 +37,9 @@
           <i data-lucide="sparkles"></i>
           <span>抽獎控制台</span>
         </button>
-        <button class="tab" type="button" data-tab="event">
-          <i data-lucide="gift"></i>
-          <span>活動/獎項</span>
+        <button class="tab" type="button" data-tab="history">
+          <i data-lucide="history"></i>
+          <span>歷史紀錄</span>
         </button>
         <button class="tab" type="button" data-tab="members">
           <i data-lucide="users"></i>
@@ -48,7 +53,7 @@
         <section class="panel tab-panel is-active" id="panel-console" data-panel="console">
           <div class="panel-head">
             <div>
-              <p class="section-label">Live Draw</p>
+              <p class="section-label">抽獎現場</p>
               <h2>抽獎控制台</h2>
             </div>
             <span class="status-badge" id="console-status">未載入</span>
@@ -56,21 +61,56 @@
 
           <form class="toolbar-form" id="load-event-form">
             <label>
-              <span>活動名稱</span>
-              <input name="title" id="event-title-query" autocomplete="off" placeholder="ROOC 七月會員抽獎">
+              <span>未完成活動</span>
+              <select name="slug" id="event-title-select">
+                <option value="">選擇活動</option>
+              </select>
             </label>
             <button class="btn primary" type="submit">
               <i data-lucide="log-in"></i>
               <span>載入</span>
             </button>
+            <button class="btn secondary" type="button" id="refresh-events">
+              <i data-lucide="refresh-cw"></i>
+              <span>刷新活動</span>
+            </button>
+            <button class="btn secondary" type="button" id="open-create-event-dialog">
+              <i data-lucide="plus"></i>
+              <span>建立活動</span>
+            </button>
           </form>
 
           <div class="empty-state" id="console-empty">
-            <img src="assets/raffle-mark.svg" alt="">
+            <img src="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" alt="">
             <p>載入活動後開始抽獎。</p>
           </div>
 
           <div class="console-detail" id="console-detail" hidden>
+            <section class="table-card">
+              <div class="table-head">
+                <h3>獎項佇列</h3>
+                <button class="btn secondary" type="button" id="open-bonus-prize-dialog">
+                  <i data-lucide="plus"></i>
+                  <span>新增獎項</span>
+                </button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>獎項</th>
+                      <th>提供者</th>
+                      <th>名額</th>
+                      <th>已完成</th>
+                      <th>剩餘</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="prize-table"></tbody>
+                </table>
+              </div>
+            </section>
+
             <section class="stats-grid">
               <div>
                 <dt>公會中成員</dt>
@@ -90,11 +130,11 @@
               </div>
             </section>
 
-            <div class="board-grid">
+            <div class="board-grid single-board">
               <section class="info-block draw-station">
                 <div class="block-head">
                   <div>
-                    <p class="section-label">Draw</p>
+                    <p class="section-label">抽獎</p>
                     <h3 id="event-title">尚未載入</h3>
                   </div>
                   <span class="status-badge" id="event-status-badge">未載入</span>
@@ -105,40 +145,24 @@
                     <span>選擇獎項</span>
                     <select id="draw-prize-select"></select>
                   </label>
+                  <label>
+                    <span>抽出人數</span>
+                    <input id="draw-count" type="number" min="1" max="1" step="1" value="1">
+                  </label>
                   <button class="btn accent" type="button" id="draw-prize">
                     <i data-lucide="dice-5"></i>
                     <span>抽出</span>
                   </button>
                 </div>
-
                 <div class="pending-card" id="pending-card" hidden>
-                  <p class="section-label">Pending</p>
-                  <h3 id="pending-member">等待處理</h3>
-                  <p class="description" id="pending-detail"></p>
-                  <div class="button-row">
-                    <button class="btn primary" type="button" id="accept-draw">
-                      <i data-lucide="check"></i>
-                      <span>確認得獎</span>
-                    </button>
-                    <button class="btn secondary" type="button" id="decline-draw">
-                      <i data-lucide="rotate-ccw"></i>
-                      <span>放棄並重抽</span>
-                    </button>
+                  <div class="block-head compact">
+                    <div>
+                      <p class="section-label">待處理</p>
+                      <h3>待處理抽獎</h3>
+                    </div>
+                    <span class="status-badge" id="pending-count">0 筆</span>
                   </div>
-                  <form class="transfer-form" id="transfer-form">
-                    <label>
-                      <span>指定轉讓給會員編號</span>
-                      <input name="member_no" autocomplete="off" placeholder="M0001">
-                    </label>
-                    <label>
-                      <span>備註</span>
-                      <input name="note" autocomplete="off" placeholder="現場指定">
-                    </label>
-                    <button class="btn secondary" type="submit">
-                      <i data-lucide="move-right"></i>
-                      <span>指定轉讓</span>
-                    </button>
-                  </form>
+                  <div class="pending-list" id="pending-list"></div>
                 </div>
 
                 <div class="button-row console-actions">
@@ -158,56 +182,13 @@
                     <i data-lucide="lock"></i>
                     <span>結束活動</span>
                   </button>
-                </div>
-              </section>
-
-              <section class="info-block form-stack">
-                <div class="block-head compact">
-                  <div>
-                    <p class="section-label">Bonus</p>
-                    <h3>加碼獎項</h3>
-                  </div>
-                </div>
-                <form class="form-stack" id="add-prize-form">
-                  <label>
-                    <span>獎項名稱</span>
-                    <input name="name" maxlength="120" required placeholder="Steam 禮物卡">
-                  </label>
-                  <label>
-                    <span>提供者</span>
-                    <input name="provider" maxlength="120" required placeholder="ROOC 團隊">
-                  </label>
-                  <label>
-                    <span>名額</span>
-                    <input name="quantity" type="number" min="1" max="200" value="1" required>
-                  </label>
-                  <button class="btn primary full" type="submit">
-                    <i data-lucide="plus"></i>
-                    <span>新增/加碼</span>
+                  <button class="btn danger" type="button" id="delete-event">
+                    <i data-lucide="trash-2"></i>
+                    <span>刪除活動</span>
                   </button>
-                </form>
+                </div>
               </section>
             </div>
-
-            <section class="table-card">
-              <div class="table-head">
-                <h3>獎項佇列</h3>
-              </div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>獎項</th>
-                      <th>提供者</th>
-                      <th>名額</th>
-                      <th>已完成</th>
-                      <th>剩餘</th>
-                    </tr>
-                  </thead>
-                  <tbody id="prize-table"></tbody>
-                </table>
-              </div>
-            </section>
 
             <div class="history-grid">
               <section class="table-card">
@@ -219,6 +200,7 @@
                     <thead>
                       <tr>
                         <th>獎項</th>
+                        <th>提供者</th>
                         <th>原抽中者</th>
                         <th>領獎者</th>
                         <th>狀態</th>
@@ -241,7 +223,6 @@
                         <th>獎項</th>
                         <th>抽中</th>
                         <th>結果</th>
-                        <th>Token</th>
                       </tr>
                     </thead>
                     <tbody id="draw-log-table"></tbody>
@@ -250,53 +231,249 @@
               </section>
             </div>
           </div>
-        </section>
 
-        <section class="panel tab-panel" id="panel-event" data-panel="event" hidden>
-          <div class="panel-head">
-            <div>
-              <p class="section-label">Event</p>
-              <h2>活動設定</h2>
-            </div>
-            <span class="status-badge">管理 PIN 保護</span>
-          </div>
-
-          <div class="split-layout">
-            <form class="info-block form-stack" id="create-event-form">
-              <div class="block-head compact">
+          <dialog class="modal prize-modal" id="bonus-prize-dialog">
+            <div class="modal-shell">
+              <div class="modal-head">
                 <div>
-                  <p class="section-label">Create</p>
+                  <p class="section-label" id="bonus-prize-mode">新增</p>
+                  <h3 id="bonus-prize-title">新增獎項</h3>
+                </div>
+                <button class="btn icon-button" type="button" id="close-bonus-prize-dialog" aria-label="關閉獎項加碼">
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+
+              <form class="form-stack" id="add-prize-form">
+                <input name="prize_id" id="bonus-prize-id" type="hidden">
+                <div class="selected-prize" id="bonus-selected-prize" hidden>
+                  <span>加碼獎項</span>
+                  <strong id="bonus-selected-prize-name"></strong>
+                </div>
+                <label data-new-prize-field>
+                  <span>獎項名稱</span>
+                  <input name="name" id="bonus-prize-name" maxlength="120" required placeholder="月卡">
+                </label>
+                <label data-new-prize-field>
+                  <span>提供者</span>
+                  <select name="provider" id="prize-provider-select" required>
+                    <option value="">選擇提供者</option>
+                  </select>
+                </label>
+                <label>
+                  <span id="bonus-quantity-label">名額</span>
+                  <input name="quantity" id="bonus-prize-quantity" type="number" min="1" max="200" value="1" required>
+                </label>
+                <div class="button-row">
+                  <button class="btn primary" type="submit">
+                    <i data-lucide="plus"></i>
+                    <span id="bonus-prize-submit-label">新增獎項</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="cancel-bonus-prize-dialog">
+                    <i data-lucide="x"></i>
+                    <span>取消</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </dialog>
+
+          <dialog class="modal draw-animation-modal" id="draw-animation-dialog">
+            <div class="modal-shell draw-animation-shell">
+              <button class="btn icon-button draw-animation-close" type="button" id="close-draw-animation" aria-label="關閉抽獎結果">
+                <i data-lucide="x"></i>
+              </button>
+              <div class="draw-animation-stage" aria-live="polite">
+                <div class="fireworks-layer" id="draw-fireworks-layer" aria-hidden="true"></div>
+                <div class="draw-portal" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="draw-lightbar" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <p class="section-label" id="draw-animation-phase">抽選中</p>
+                <h3 id="draw-animation-prize">準備抽獎</h3>
+                <div class="draw-roller" id="draw-animation-roller">ROOC</div>
+                <div class="draw-result-list" id="draw-animation-results"></div>
+                <div class="draw-progress" aria-hidden="true">
+                  <span></span>
+                </div>
+              </div>
+            </div>
+          </dialog>
+
+          <dialog class="modal compact-modal" id="create-event-dialog">
+            <div class="modal-shell">
+              <div class="modal-head">
+                <div>
+                  <p class="section-label">建立</p>
                   <h3>建立抽獎活動</h3>
                 </div>
+                <button class="btn icon-button" type="button" id="close-create-event-dialog" aria-label="關閉建立活動">
+                  <i data-lucide="x"></i>
+                </button>
               </div>
-              <label>
-                <span>活動名稱</span>
-                <input name="title" required maxlength="120" placeholder="ROOC 七月會員抽獎">
-              </label>
-              <label>
-                <span>活動說明</span>
-                <textarea name="description" rows="4" maxlength="1200"></textarea>
-              </label>
-              <button class="btn primary full" type="submit">
-                <i data-lucide="plus"></i>
-                <span>建立活動</span>
-              </button>
-            </form>
 
-            <section class="info-block">
-              <div class="block-head compact">
-                <div>
-                  <p class="section-label">Rules</p>
-                  <h3>目前規則</h3>
+              <form class="form-stack" id="create-event-form">
+                <label>
+                  <span>活動名稱</span>
+                  <input name="title" required maxlength="120" placeholder="">
+                </label>
+                <label>
+                  <span>活動說明</span>
+                  <textarea name="description" rows="4" maxlength="1200"></textarea>
+                </label>
+                <div class="button-row">
+                  <button class="btn primary" type="submit">
+                    <i data-lucide="plus"></i>
+                    <span>建立活動</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="cancel-create-event-dialog">
+                    <i data-lucide="x"></i>
+                    <span>取消</span>
+                  </button>
                 </div>
+              </form>
+            </div>
+          </dialog>
+        </section>
+
+        <section class="panel tab-panel" id="panel-history" data-panel="history" hidden>
+          <div class="panel-head">
+            <div>
+              <p class="section-label">歷史查詢</p>
+              <h2>歷史抽獎資訊</h2>
+            </div>
+            <span class="status-badge" id="history-status">未載入</span>
+          </div>
+
+          <form class="toolbar-form compact-toolbar" id="history-event-form">
+            <label>
+              <span>已結束活動</span>
+              <select name="slug" id="history-event-select">
+                <option value="">選擇歷史活動</option>
+              </select>
+            </label>
+            <button class="btn primary" type="submit">
+              <i data-lucide="log-in"></i>
+              <span>載入</span>
+            </button>
+            <button class="btn secondary" type="button" id="refresh-history-events">
+              <i data-lucide="refresh-cw"></i>
+              <span>刷新歷史</span>
+            </button>
+          </form>
+
+          <div class="empty-state" id="history-empty">
+            <img src="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" alt="">
+            <p>載入已結束活動後查看歷史資訊。</p>
+          </div>
+
+          <div class="history-detail" id="history-detail" hidden>
+            <section class="info-block">
+              <div class="block-head">
+                <div>
+                  <p class="section-label">活動</p>
+                  <h3 id="history-title">尚未載入</h3>
+                </div>
+                <span class="status-badge" id="history-event-status-badge">未載入</span>
               </div>
-              <ul class="rule-list">
-                <li>參加者來自 `rooc_members` 公會中成員。</li>
-                <li>同一場活動中，每個人最多被處理一次。</li>
-                <li>放棄、確認得獎、指定轉讓者都會進入排除名單。</li>
-                <li>轉讓對象必須是尚未排除且仍在公會中的會員。</li>
-                <li>獎項可在抽獎過程中隨時新增加碼。</li>
-              </ul>
+              <p class="description" id="history-closed-at"></p>
+              <div class="button-row">
+                <button class="btn secondary" type="button" id="export-history-awards">
+                  <i data-lucide="download"></i>
+                  <span>匯出 CSV</span>
+                </button>
+                <button class="btn danger" type="button" id="delete-history-event">
+                  <i data-lucide="trash-2"></i>
+                  <span>刪除活動</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="stats-grid">
+              <div>
+                <dt>獎項數</dt>
+                <dd id="history-stat-prizes">0</dd>
+              </div>
+              <div>
+                <dt>中獎紀錄</dt>
+                <dd id="history-stat-awards">0</dd>
+              </div>
+              <div>
+                <dt>抽獎紀錄</dt>
+                <dd id="history-stat-draws">0</dd>
+              </div>
+              <div>
+                <dt>已排除</dt>
+                <dd id="history-stat-excluded">0</dd>
+              </div>
+            </section>
+
+            <section class="table-card">
+              <div class="table-head">
+                <h3>獎項紀錄</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>獎項</th>
+                      <th>提供者</th>
+                      <th>名額</th>
+                      <th>已完成</th>
+                      <th>剩餘</th>
+                    </tr>
+                  </thead>
+                  <tbody id="history-prize-table"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="table-card">
+              <div class="table-head">
+                <h3>中獎名單</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>獎項</th>
+                      <th>提供者</th>
+                      <th>原抽中者</th>
+                      <th>領獎者</th>
+                      <th>狀態</th>
+                      <th>時間</th>
+                    </tr>
+                  </thead>
+                  <tbody id="history-award-table"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="table-card">
+              <div class="table-head">
+                <h3>抽獎紀錄</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>獎項</th>
+                      <th>抽中</th>
+                      <th>結果</th>
+                    </tr>
+                  </thead>
+                  <tbody id="history-draw-log-table"></tbody>
+                </table>
+              </div>
             </section>
           </div>
         </section>
@@ -316,81 +493,57 @@
             </div>
           </div>
 
-          <div class="member-editor-layout">
-            <form class="info-block form-stack" id="member-form">
-              <div class="block-head compact">
-                <div>
-                  <p class="section-label">Create</p>
-                  <h3>新增成員</h3>
-                </div>
-              </div>
-              <label>
-                <span>編號</span>
-                <input name="member_no" autocomplete="off" required maxlength="80" placeholder="M0001">
-              </label>
-              <label>
-                <span>角色名稱</span>
-                <input name="role_name" maxlength="120" required>
-              </label>
-              <div class="field-with-action">
-                <label>
-                  <span>職業</span>
-                  <select name="occupation" id="member-occupation">
-                    <option value="">未設定</option>
-                  </select>
-                </label>
-                <button class="btn secondary" type="button" id="open-occupation-dialog">
-                  <i data-lucide="list-plus"></i>
-                  <span>管理職業</span>
-                </button>
-              </div>
-              <div class="check-row">
-                <label>
-                  <input name="joined_dc" type="checkbox">
-                  <span>已加入 DC</span>
-                </label>
-                <label>
-                  <input name="is_active" type="checkbox" checked>
-                  <span>公會中</span>
-                </label>
-              </div>
-              <div class="button-row">
-                <button class="btn primary" type="submit">
-                  <i data-lucide="save"></i>
-                  <span>新增成員</span>
-                </button>
-                <button class="btn secondary" type="button" id="clear-member-edit">
-                  <i data-lucide="x"></i>
-                  <span>清除</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
           <section class="table-card">
             <div class="table-head with-form">
               <h3>成員列表</h3>
-              <form class="inline-form" id="member-search-form">
-                <input name="query" autocomplete="off" placeholder="搜尋編號、角色名稱、職業">
-                <label class="inline-check">
-                  <input name="include_inactive" type="checkbox">
-                  <span>含退會</span>
-                </label>
-                <button class="btn secondary" type="submit">
-                  <i data-lucide="search"></i>
-                  <span>搜尋</span>
+              <div class="member-list-toolbar">
+                <button class="btn primary" type="button" id="open-member-create-dialog">
+                  <i data-lucide="plus"></i>
+                  <span>新增成員</span>
                 </button>
-              </form>
+                <form class="inline-form" id="member-search-form">
+                  <input name="query" autocomplete="off" placeholder="搜尋編號、角色名稱、職業">
+                  <label class="inline-check">
+                    <input name="include_inactive" type="checkbox">
+                    <span>含退會</span>
+                  </label>
+                </form>
+              </div>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>編號</th>
-                    <th>角色名稱</th>
-                    <th>職業</th>
-                    <th>DC</th>
-                    <th>公會狀態</th>
+                    <th>
+                      <button class="sort-button" type="button" data-member-sort="member_no">
+                        <span>編號</span>
+                        <span class="sort-icon" data-member-sort-icon><i data-lucide="arrow-up"></i></span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="sort-button" type="button" data-member-sort="role_name">
+                        <span>角色名稱</span>
+                        <span class="sort-icon" data-member-sort-icon><i data-lucide="arrow-up-down"></i></span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="sort-button" type="button" data-member-sort="occupation">
+                        <span>職業</span>
+                        <span class="sort-icon" data-member-sort-icon><i data-lucide="arrow-up-down"></i></span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="sort-button" type="button" data-member-sort="joined_dc">
+                        <span>DC</span>
+                        <span class="sort-icon" data-member-sort-icon><i data-lucide="arrow-up-down"></i></span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="sort-button" type="button" data-member-sort="is_active">
+                        <span>公會狀態</span>
+                        <span class="sort-icon" data-member-sort-icon><i data-lucide="arrow-up-down"></i></span>
+                      </button>
+                    </th>
                     <th>操作</th>
                   </tr>
                 </thead>
@@ -398,6 +551,63 @@
               </table>
             </div>
           </section>
+
+          <dialog class="modal member-modal" id="member-create-dialog">
+            <div class="modal-shell">
+              <div class="modal-head">
+                <div>
+                  <p class="section-label">新增</p>
+                  <h3>新增成員</h3>
+                </div>
+                <button class="btn icon-button" type="button" id="close-member-create-dialog" aria-label="關閉新增成員">
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+
+              <form class="form-stack" id="member-form">
+                <label>
+                  <span>編號</span>
+                  <input name="member_no" autocomplete="off" required maxlength="80" placeholder="">
+                </label>
+                <label>
+                  <span>角色名稱</span>
+                  <input name="role_name" maxlength="120" required>
+                </label>
+                <div class="field-with-action">
+                  <label>
+                    <span>職業</span>
+                    <select name="occupation" id="member-occupation">
+                      <option value="">未設定</option>
+                    </select>
+                  </label>
+                  <button class="btn secondary" type="button" id="open-occupation-dialog">
+                    <i data-lucide="list-plus"></i>
+                    <span>管理職業</span>
+                  </button>
+                </div>
+                <div class="check-row">
+                  <label>
+                    <input name="joined_dc" type="checkbox">
+                    <span>已加入 DC</span>
+                  </label>
+                  <label>
+                    <input name="is_active" type="checkbox" checked>
+                    <span>公會中</span>
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button class="btn primary" type="submit">
+                    <i data-lucide="save"></i>
+                    <span>新增成員</span>
+                  </button>
+                  <button class="btn secondary" type="button" id="clear-member-create">
+                    <i data-lucide="x"></i>
+                    <span>清除</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </dialog>
 
           <dialog class="modal compact-modal" id="member-edit-dialog">
             <div class="modal-shell">

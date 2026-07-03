@@ -62,13 +62,26 @@ create table if not exists public.raffle_prizes (
   event_id uuid not null references public.raffle_events(id) on delete cascade,
   name text not null,
   provider text not null,
+  provider_member_id uuid references public.rooc_members(id),
   quantity integer not null default 1 check (quantity between 1 and 200),
   sort_order integer not null default 0,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   check (char_length(name) between 1 and 120),
-  check (char_length(provider) between 1 and 120)
+  constraint raffle_prizes_provider_check check (char_length(provider) between 1 and 220)
 );
+
+alter table public.raffle_prizes
+  add column if not exists provider_member_id uuid references public.rooc_members(id);
+
+update public.raffle_prizes p
+set provider_member_id = m.id
+from public.rooc_members m
+where p.provider_member_id is null
+  and m.member_no = coalesce(
+    substring(p.provider from '（([^（）]+)）$'),
+    substring(p.provider from '\(([^()]+)\)$')
+  );
 
 create table if not exists public.raffle_draws (
   id uuid primary key default extensions.gen_random_uuid(),
@@ -86,9 +99,7 @@ create table if not exists public.raffle_draws (
   check (note is null or char_length(note) <= 500)
 );
 
-create unique index if not exists raffle_draws_one_pending_per_event
-  on public.raffle_draws (event_id)
-  where status = 'pending';
+drop index if exists public.raffle_draws_one_pending_per_event;
 
 create index if not exists raffle_events_title_lookup_idx
   on public.raffle_events (lower(trim(title)));
@@ -109,6 +120,10 @@ create table if not exists public.raffle_exclusions (
 
 create index if not exists raffle_prizes_event_order_idx
   on public.raffle_prizes (event_id, sort_order, created_at);
+
+create index if not exists raffle_prizes_provider_member_idx
+  on public.raffle_prizes (event_id, provider_member_id)
+  where provider_member_id is not null;
 
 create index if not exists raffle_draws_event_created_idx
   on public.raffle_draws (event_id, created_at desc);
@@ -157,11 +172,11 @@ begin
   where id = true;
 
   if not found then
-    raise exception 'App admin PIN is not initialized.';
+    raise exception '尚未設定成員管理 PIN。';
   end if;
 
   if p_admin_pin is null or extensions.crypt(p_admin_pin, v_hash) <> v_hash then
-    raise exception 'App admin PIN is invalid.';
+    raise exception '成員管理 PIN 不正確。';
   end if;
 end;
 $$;
@@ -183,7 +198,7 @@ begin
   where slug = lower(trim(p_slug));
 
   if not found then
-    raise exception 'Raffle event not found.';
+    raise exception '找不到活動。';
   end if;
 
   return v_event_id;
@@ -202,7 +217,7 @@ begin
   p_admin_pin := nullif(trim(p_admin_pin), '');
 
   if p_admin_pin is null or char_length(p_admin_pin) < 4 then
-    raise exception 'App admin PIN must be at least 4 characters.';
+    raise exception '成員管理 PIN 至少需要 4 個字元。';
   end if;
 
   select admin_pin_hash
@@ -212,17 +227,17 @@ begin
 
   if found then
     if extensions.crypt(p_admin_pin, v_hash) <> v_hash then
-      raise exception 'App admin PIN is invalid.';
+      raise exception '成員管理 PIN 不正確。';
     end if;
 
-    return query select true, 'App admin PIN verified.';
+    return query select true, '成員管理 PIN 驗證成功。';
     return;
   end if;
 
   insert into public.raffle_app_config (id, admin_pin_hash)
   values (true, extensions.crypt(p_admin_pin, extensions.gen_salt('bf')));
 
-  return query select true, 'App admin PIN initialized.';
+  return query select true, '成員管理 PIN 已設定。';
 end;
 $$;
 
@@ -240,7 +255,7 @@ begin
   p_new_pin := nullif(trim(p_new_pin), '');
 
   if p_new_pin is null or char_length(p_new_pin) < 4 then
-    raise exception 'App admin PIN must be at least 4 characters.';
+    raise exception '成員管理 PIN 至少需要 4 個字元。';
   end if;
 
   perform public.assert_app_admin(p_current_pin);
@@ -251,7 +266,7 @@ begin
     updated_at = now()
   where id = true;
 
-  return query select true, 'App admin PIN changed.';
+  return query select true, '成員管理 PIN 已更新。';
 end;
 $$;
 
@@ -311,7 +326,7 @@ begin
   perform public.assert_app_admin(p_app_admin_pin);
 
   if v_name is null then
-    raise exception 'Occupation name is required.';
+    raise exception '請輸入職業名稱。';
   end if;
 
   if v_original_name is not null and v_original_name <> v_name then
@@ -323,7 +338,7 @@ begin
     where public.rooc_occupations.name = v_original_name;
 
     if not found then
-      raise exception 'Original occupation not found.';
+      raise exception '找不到原本的職業。';
     end if;
 
     update public.rooc_members
@@ -390,12 +405,12 @@ begin
   v_original_member_no := nullif(trim(p_original_member_no), '');
   v_occupation := nullif(trim(p_occupation), '');
   if v_member_no is null then
-    raise exception 'Member number is required.';
+    raise exception '請輸入成員編號。';
   end if;
 
   p_role_name := nullif(trim(p_role_name), '');
   if p_role_name is null then
-    raise exception 'Role name is required.';
+    raise exception '請輸入角色名稱。';
   end if;
 
   if v_occupation is not null and not exists (
@@ -404,7 +419,7 @@ begin
     where o.name = v_occupation
       and o.is_active
   ) then
-    raise exception 'Occupation is not active.';
+    raise exception '此職業目前未啟用。';
   end if;
 
   if v_original_member_no is not null then
@@ -414,7 +429,7 @@ begin
     where m.member_no = v_original_member_no;
 
     if not found then
-      raise exception 'Member not found.';
+      raise exception '找不到成員。';
     end if;
 
     if exists (
@@ -423,7 +438,7 @@ begin
       where m.member_no = v_member_no
         and m.id <> v_member_id
     ) then
-      raise exception 'Member number already exists.';
+      raise exception '成員編號已存在。';
     end if;
 
     update public.rooc_members
@@ -434,8 +449,16 @@ begin
       joined_dc = coalesce(p_joined_dc, false),
       is_active = coalesce(p_is_active, true),
       updated_at = now()
-    where id = v_member_id;
+    where public.rooc_members.id = v_member_id;
   else
+    if exists (
+      select 1
+      from public.rooc_members m
+      where m.member_no = v_member_no
+    ) then
+      raise exception '成員編號已存在。';
+    end if;
+
     insert into public.rooc_members (
       member_no,
       role_name,
@@ -451,14 +474,7 @@ begin
       coalesce(p_joined_dc, false),
       coalesce(p_is_active, true),
       now()
-    )
-    on conflict on constraint rooc_members_member_no_key do update
-    set
-      role_name = excluded.role_name,
-      occupation = excluded.occupation,
-      joined_dc = excluded.joined_dc,
-      is_active = excluded.is_active,
-      updated_at = now();
+    );
   end if;
 
   return query
@@ -492,7 +508,7 @@ begin
 
   v_member_no := nullif(trim(p_member_no), '');
   if v_member_no is null then
-    raise exception 'Member number is required.';
+    raise exception '請輸入成員編號。';
   end if;
 
   update public.rooc_members
@@ -502,7 +518,7 @@ begin
   where public.rooc_members.member_no = v_member_no;
 
   if not found then
-    raise exception 'Member not found.';
+    raise exception '找不到成員。';
   end if;
 
   return query
@@ -552,8 +568,70 @@ begin
       or coalesce(m.role_name, '') ilike '%' || v_query || '%'
       or coalesce(m.occupation, '') ilike '%' || v_query || '%'
     )
-  order by m.is_active desc, m.updated_at desc
+  order by m.member_no
   limit 200;
+end;
+$$;
+
+create or replace function public.list_open_raffle_events(
+  p_app_admin_pin text
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  status text,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  return query
+  select
+    e.id,
+    e.slug,
+    e.title,
+    e.status,
+    e.created_at
+  from public.raffle_events e
+  where e.status = 'live'
+  order by e.created_at desc;
+end;
+$$;
+
+create or replace function public.list_closed_raffle_events(
+  p_app_admin_pin text
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  status text,
+  created_at timestamptz,
+  closed_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  return query
+  select
+    e.id,
+    e.slug,
+    e.title,
+    e.status,
+    e.created_at,
+    e.closed_at
+  from public.raffle_events e
+  where e.status = 'closed'
+  order by e.closed_at desc nulls last, e.created_at desc;
 end;
 $$;
 
@@ -580,7 +658,7 @@ begin
   p_admin_pin := nullif(trim(p_admin_pin), '');
 
   if p_title is null then
-    raise exception 'Title is required.';
+    raise exception '請輸入活動名稱。';
   end if;
 
   perform public.assert_app_admin(p_admin_pin);
@@ -590,7 +668,7 @@ begin
     from public.raffle_events e
     where lower(trim(e.title)) = lower(p_title)
   ) then
-    raise exception 'Raffle event title already exists.';
+    raise exception '活動名稱已存在。';
   end if;
 
   v_base := public.slugify(coalesce(p_slug, p_title));
@@ -638,7 +716,7 @@ begin
   v_event_id := public.validate_event_admin(p_slug, p_admin_pin);
 
   if p_status not in ('live', 'closed') then
-    raise exception 'Status must be live or closed.';
+    raise exception '活動狀態只能是進行中或已關閉。';
   end if;
 
   update public.raffle_events
@@ -646,6 +724,25 @@ begin
     status = p_status,
     closed_at = case when p_status = 'closed' then now() else null end
   where id = v_event_id;
+end;
+$$;
+
+create or replace function public.delete_raffle_event(
+  p_slug text,
+  p_admin_pin text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event_id uuid;
+begin
+  v_event_id := public.validate_event_admin(p_slug, p_admin_pin);
+
+  delete from public.raffle_events e
+  where e.id = v_event_id;
 end;
 $$;
 
@@ -663,16 +760,19 @@ set search_path = public, extensions, pg_temp
 as $$
 declare
   v_event public.raffle_events%rowtype;
+  v_provider_member public.rooc_members%rowtype;
+  v_provider_label text;
   v_sort integer;
   v_prize_id uuid;
 begin
   select *
   into v_event
   from public.raffle_events e
-  where e.id = public.validate_event_admin(p_slug, p_admin_pin);
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
 
   if v_event.status <> 'live' then
-    raise exception 'Closed event cannot add prizes.';
+    raise exception '活動已關閉，不能新增獎項。';
   end if;
 
   p_name := nullif(trim(p_name), '');
@@ -680,15 +780,27 @@ begin
   p_quantity := coalesce(p_quantity, 1);
 
   if p_name is null then
-    raise exception 'Prize name is required.';
+    raise exception '請輸入獎項名稱。';
   end if;
 
   if p_provider is null then
-    raise exception 'Prize provider is required.';
+    raise exception '請輸入獎項提供者。';
   end if;
 
+  select *
+  into v_provider_member
+  from public.rooc_members m
+  where m.member_no = p_provider
+    and m.is_active;
+
+  if not found then
+    raise exception '獎項提供者必須是公會中成員。';
+  end if;
+
+  v_provider_label := public.member_label(v_provider_member) || '（' || v_provider_member.member_no || '）';
+
   if p_quantity < 1 or p_quantity > 200 then
-    raise exception 'Prize quantity must be between 1 and 200.';
+    raise exception '獎項名額必須介於 1 到 200。';
   end if;
 
   select coalesce(max(sort_order), 0) + 1
@@ -696,14 +808,77 @@ begin
   from public.raffle_prizes
   where event_id = v_event.id;
 
-  insert into public.raffle_prizes (event_id, name, provider, quantity, sort_order)
-  values (v_event.id, p_name, p_provider, p_quantity, v_sort)
+  insert into public.raffle_prizes (event_id, name, provider, provider_member_id, quantity, sort_order)
+  values (v_event.id, p_name, v_provider_label, v_provider_member.id, p_quantity, v_sort)
   returning public.raffle_prizes.id into v_prize_id;
 
   return query
   select p.id, p.name, p.provider, p.quantity
   from public.raffle_prizes p
   where p.id = v_prize_id;
+end;
+$$;
+
+create or replace function public.bonus_raffle_prize_quantity(
+  p_slug text,
+  p_admin_pin text,
+  p_prize_id uuid,
+  p_quantity integer default 1
+)
+returns table(id uuid, name text, provider text, quantity integer)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event public.raffle_events%rowtype;
+  v_prize public.raffle_prizes%rowtype;
+begin
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
+
+  if v_event.status <> 'live' then
+    raise exception '活動已關閉，不能加碼獎項。';
+  end if;
+
+  if p_prize_id is null then
+    raise exception '請選擇要加碼的獎項。';
+  end if;
+
+  p_quantity := coalesce(p_quantity, 1);
+
+  if p_quantity < 1 or p_quantity > 200 then
+    raise exception '加碼名額必須介於 1 到 200。';
+  end if;
+
+  select *
+  into v_prize
+  from public.raffle_prizes p
+  where p.id = p_prize_id
+    and p.event_id = v_event.id
+    and p.is_active
+  for update;
+
+  if not found then
+    raise exception '找不到要加碼的獎項。';
+  end if;
+
+  if v_prize.quantity + p_quantity > 200 then
+    raise exception '獎項名額加碼後不能超過 200。';
+  end if;
+
+  update public.raffle_prizes p
+  set quantity = p.quantity + p_quantity
+  where p.id = v_prize.id
+  returning p.* into v_prize;
+
+  return query
+  select p.id, p.name, p.provider, p.quantity
+  from public.raffle_prizes p
+  where p.id = v_prize.id;
 end;
 $$;
 
@@ -775,7 +950,9 @@ begin
             'id', prize_rows.id,
             'name', prize_rows.name,
             'provider', prize_rows.provider,
+            'provider_member_id', prize_rows.provider_member_id,
             'quantity', prize_rows.quantity,
+            'eligible_count', prize_rows.eligible_count,
             'filled_count', prize_rows.filled_count,
             'pending_count', prize_rows.pending_count,
             'remaining_count', greatest(prize_rows.quantity - prize_rows.filled_count - prize_rows.pending_count, 0),
@@ -788,9 +965,22 @@ begin
             p.id,
             p.name,
             p.provider,
+            p.provider_member_id,
             p.quantity,
             p.sort_order,
             p.created_at,
+            (
+              select count(*)::integer
+              from public.rooc_members m
+              where m.is_active
+                and (p.provider_member_id is null or m.id <> p.provider_member_id)
+                and not exists (
+                  select 1
+                  from public.raffle_exclusions x
+                  where x.event_id = v_event.id
+                    and x.member_id = m.id
+                )
+            ) as eligible_count,
             (
               select count(*)::integer
               from public.raffle_draws d
@@ -810,28 +1000,48 @@ begin
       ),
       '[]'::jsonb
     ) as prizes,
-    (
-      select jsonb_build_object(
-        'id', d.id,
-        'prize_id', d.prize_id,
-        'prize_name', p.name,
-        'provider', p.provider,
-        'slot_number', d.slot_number,
-        'drawn_member_id', m.id,
-        'member_no', m.member_no,
-        'role_name', public.member_label(m),
-        'occupation', m.occupation,
-        'joined_dc', m.joined_dc,
-        'random_token', d.random_token,
-        'created_at', d.created_at
-      )
-      from public.raffle_draws d
-      join public.raffle_prizes p on p.id = d.prize_id
-      join public.rooc_members m on m.id = d.drawn_member_id
-      where d.event_id = v_event.id
-        and d.status = 'pending'
-      order by d.created_at desc
-      limit 1
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', pending_rows.id,
+            'prize_id', pending_rows.prize_id,
+            'prize_name', pending_rows.prize_name,
+            'provider', pending_rows.provider,
+            'slot_number', pending_rows.slot_number,
+            'drawn_member_id', pending_rows.drawn_member_id,
+            'member_no', pending_rows.member_no,
+            'role_name', pending_rows.role_name,
+            'occupation', pending_rows.occupation,
+            'joined_dc', pending_rows.joined_dc,
+            'random_token', pending_rows.random_token,
+            'created_at', pending_rows.created_at
+          )
+          order by pending_rows.created_at, pending_rows.slot_number
+        )
+        from (
+          select
+            d.id,
+            d.prize_id,
+            p.name as prize_name,
+            p.provider,
+            d.slot_number,
+            m.id as drawn_member_id,
+            m.member_no,
+            public.member_label(m) as role_name,
+            m.occupation,
+            m.joined_dc,
+            d.random_token,
+            d.created_at
+          from public.raffle_draws d
+          join public.raffle_prizes p on p.id = d.prize_id
+          join public.rooc_members m on m.id = d.drawn_member_id
+          where d.event_id = v_event.id
+            and d.status = 'pending'
+          order by d.created_at, d.slot_number
+        ) as pending_rows
+      ),
+      '[]'::jsonb
     ) as pending_draw,
     coalesce(
       (
@@ -952,7 +1162,7 @@ begin
   perform public.assert_app_admin(p_app_admin_pin);
 
   if v_title is null then
-    raise exception 'Title is required.';
+    raise exception '請輸入活動名稱。';
   end if;
 
   select e.slug
@@ -963,7 +1173,7 @@ begin
   limit 1;
 
   if not found then
-    raise exception 'Raffle event not found.';
+    raise exception '找不到活動。';
   end if;
 
   return query
@@ -972,10 +1182,50 @@ begin
 end;
 $$;
 
+create or replace function public.get_raffle_transfer_candidates(
+  p_slug text,
+  p_admin_pin text
+)
+returns table(
+  id uuid,
+  member_no text,
+  role_name text,
+  occupation text,
+  joined_dc boolean
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event_id uuid;
+begin
+  v_event_id := public.validate_event_admin(p_slug, p_admin_pin);
+
+  return query
+  select
+    m.id,
+    m.member_no,
+    public.member_label(m) as role_name,
+    m.occupation,
+    m.joined_dc
+  from public.rooc_members m
+  where m.is_active
+    and not exists (
+      select 1
+      from public.raffle_exclusions x
+      where x.event_id = v_event_id
+        and x.member_id = m.id
+    )
+  order by m.member_no;
+end;
+$$;
+
 create or replace function public.draw_raffle_prize(
   p_slug text,
   p_admin_pin text,
-  p_prize_id uuid
+  p_prize_id uuid,
+  p_draw_count integer default 1
 )
 returns table(
   draw_id uuid,
@@ -993,39 +1243,42 @@ declare
   v_event public.raffle_events%rowtype;
   v_prize public.raffle_prizes%rowtype;
   v_member public.rooc_members%rowtype;
+  v_draw_count integer;
   v_filled integer;
   v_pending integer;
+  v_remaining integer;
+  v_eligible integer;
   v_slot integer;
   v_draw_id uuid;
   v_token text;
+  v_index integer;
 begin
   select *
   into v_event
   from public.raffle_events e
-  where e.id = public.validate_event_admin(p_slug, p_admin_pin);
+  where e.id = public.validate_event_admin(p_slug, p_admin_pin)
+  for update;
 
   if v_event.status <> 'live' then
-    raise exception 'Event is closed.';
+    raise exception '活動已關閉。';
   end if;
 
-  if exists (
-    select 1
-    from public.raffle_draws d
-    where d.event_id = v_event.id
-      and d.status = 'pending'
-  ) then
-    raise exception 'Resolve the pending draw before drawing again.';
-  end if;
+  v_draw_count := coalesce(p_draw_count, 1);
 
   select *
   into v_prize
   from public.raffle_prizes p
   where p.id = p_prize_id
     and p.event_id = v_event.id
-    and p.is_active;
+    and p.is_active
+  for update;
 
   if not found then
-    raise exception 'Prize not found.';
+    raise exception '找不到獎項。';
+  end if;
+
+  if v_draw_count < 1 or v_draw_count > 50 then
+    raise exception '本次抽出人數必須介於 1 到 50。';
   end if;
 
   select count(*)::integer
@@ -1040,57 +1293,103 @@ begin
   where d.prize_id = v_prize.id
     and d.status = 'pending';
 
-  if v_filled + v_pending >= v_prize.quantity then
-    raise exception 'Prize has no remaining slots.';
+  v_remaining := v_prize.quantity - v_filled - v_pending;
+
+  if v_remaining <= 0 then
+    raise exception '此獎項已沒有剩餘名額。';
   end if;
 
-  select *
-  into v_member
+  if v_draw_count > v_remaining then
+    raise exception '本次抽出人數超過此獎項剩餘名額。';
+  end if;
+
+  select count(*)::integer
+  into v_eligible
   from public.rooc_members m
   where m.is_active
+    and (v_prize.provider_member_id is null or m.id <> v_prize.provider_member_id)
     and not exists (
       select 1
       from public.raffle_exclusions x
       where x.event_id = v_event.id
         and x.member_id = m.id
     )
-  order by extensions.gen_random_uuid()
-  limit 1;
+  ;
 
-  if not found then
-    raise exception 'No eligible members left.';
+  if v_eligible <= 0 then
+    raise exception '沒有可抽選的成員了；獎項提供者不會抽中自己的獎。';
   end if;
 
-  v_slot := v_filled + v_pending + 1;
-  v_token := encode(extensions.gen_random_bytes(16), 'hex');
+  if v_draw_count > v_eligible then
+    raise exception '本次抽出人數超過可抽選成員數。';
+  end if;
 
-  insert into public.raffle_draws (
-    event_id,
-    prize_id,
-    slot_number,
-    drawn_member_id,
-    random_token
-  )
-  values (
-    v_event.id,
-    v_prize.id,
-    v_slot,
-    v_member.id,
-    v_token
-  )
-  returning id into v_draw_id;
+  for v_index in 1..v_draw_count loop
+    select *
+    into v_member
+    from public.rooc_members m
+    where m.is_active
+      and (v_prize.provider_member_id is null or m.id <> v_prize.provider_member_id)
+      and not exists (
+        select 1
+        from public.raffle_exclusions x
+        where x.event_id = v_event.id
+          and x.member_id = m.id
+      )
+    order by extensions.gen_random_uuid()
+    limit 1;
 
-  insert into public.raffle_exclusions (event_id, member_id, reason, source_draw_id)
-  values (v_event.id, v_member.id, 'pending', v_draw_id);
+    if not found then
+      raise exception '沒有可抽選的成員了；獎項提供者不會抽中自己的獎。';
+    end if;
 
-  return query
-  select
-    v_draw_id,
-    v_member.member_no,
-    public.member_label(v_member),
-    v_prize.name,
-    v_slot,
-    v_token;
+    select open_slots.slot_number
+    into v_slot
+    from generate_series(1, v_prize.quantity) as open_slots(slot_number)
+    where not exists (
+      select 1
+      from public.raffle_draws d
+      where d.prize_id = v_prize.id
+        and d.slot_number = open_slots.slot_number
+        and d.status in ('pending', 'accepted', 'transferred')
+    )
+    order by open_slots.slot_number
+    limit 1;
+
+    if not found then
+      raise exception '此獎項已沒有剩餘名額。';
+    end if;
+
+    v_token := encode(extensions.gen_random_bytes(16), 'hex');
+
+    insert into public.raffle_draws (
+      event_id,
+      prize_id,
+      slot_number,
+      drawn_member_id,
+      random_token
+    )
+    values (
+      v_event.id,
+      v_prize.id,
+      v_slot,
+      v_member.id,
+      v_token
+    )
+    returning id into v_draw_id;
+
+    insert into public.raffle_exclusions (event_id, member_id, reason, source_draw_id)
+    values (v_event.id, v_member.id, 'pending', v_draw_id);
+
+    return query
+    select
+      v_draw_id,
+      v_member.member_no,
+      public.member_label(v_member),
+      v_prize.name,
+      v_slot,
+      v_token;
+  end loop;
 end;
 $$;
 
@@ -1125,7 +1424,7 @@ begin
   for update;
 
   if not found then
-    raise exception 'Pending draw not found.';
+    raise exception '找不到待確認的抽獎結果。';
   end if;
 
   if p_action = 'accept' then
@@ -1175,11 +1474,11 @@ begin
       and m.is_active;
 
     if not found then
-      raise exception 'Transfer target is not an active member.';
+      raise exception '指定轉讓對象不在公會中。';
     end if;
 
     if v_target.id = v_draw.drawn_member_id then
-      raise exception 'Transfer target cannot be the drawn member.';
+      raise exception '不能轉讓給原本被抽中的成員。';
     end if;
 
     if exists (
@@ -1188,7 +1487,7 @@ begin
       where x.event_id = v_event_id
         and x.member_id = v_target.id
     ) then
-      raise exception 'Transfer target is already excluded in this event.';
+      raise exception '指定轉讓對象本場已不可再得獎。';
     end if;
 
     insert into public.raffle_exclusions (event_id, member_id, reason, source_draw_id)
@@ -1212,7 +1511,7 @@ begin
     return;
   end if;
 
-  raise exception 'Action must be accept, decline, or transfer.';
+  raise exception '抽獎處理動作不正確。';
 end;
 $$;
 
@@ -1235,12 +1534,17 @@ revoke execute on function public.upsert_rooc_occupation(text, text, text, boole
 revoke execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) from public;
 revoke execute on function public.set_rooc_member_active(text, text, boolean) from public;
 revoke execute on function public.get_rooc_members(text, text, boolean) from public;
+revoke execute on function public.list_open_raffle_events(text) from public;
+revoke execute on function public.list_closed_raffle_events(text) from public;
 revoke execute on function public.create_raffle_event(text, text, text, text) from public;
 revoke execute on function public.set_raffle_event_status(text, text, text) from public;
+revoke execute on function public.delete_raffle_event(text, text) from public;
 revoke execute on function public.add_raffle_prize(text, text, text, text, integer) from public;
+revoke execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
 revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
-revoke execute on function public.draw_raffle_prize(text, text, uuid) from public;
+revoke execute on function public.get_raffle_transfer_candidates(text, text) from public;
+revoke execute on function public.draw_raffle_prize(text, text, uuid, integer) from public;
 revoke execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) from public;
 
 grant usage on schema public to anon, authenticated;
@@ -1251,12 +1555,17 @@ grant execute on function public.upsert_rooc_occupation(text, text, text, boolea
 grant execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) to anon, authenticated;
 grant execute on function public.set_rooc_member_active(text, text, boolean) to anon, authenticated;
 grant execute on function public.get_rooc_members(text, text, boolean) to anon, authenticated;
+grant execute on function public.list_open_raffle_events(text) to anon, authenticated;
+grant execute on function public.list_closed_raffle_events(text) to anon, authenticated;
 grant execute on function public.create_raffle_event(text, text, text, text) to anon, authenticated;
 grant execute on function public.set_raffle_event_status(text, text, text) to anon, authenticated;
+grant execute on function public.delete_raffle_event(text, text) to anon, authenticated;
 grant execute on function public.add_raffle_prize(text, text, text, text, integer) to anon, authenticated;
+grant execute on function public.bonus_raffle_prize_quantity(text, text, uuid, integer) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;
-grant execute on function public.draw_raffle_prize(text, text, uuid) to anon, authenticated;
+grant execute on function public.get_raffle_transfer_candidates(text, text) to anon, authenticated;
+grant execute on function public.draw_raffle_prize(text, text, uuid, integer) to anon, authenticated;
 grant execute on function public.resolve_raffle_draw(text, text, uuid, text, text, text) to anon, authenticated;
 
 commit;

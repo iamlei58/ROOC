@@ -29,9 +29,12 @@ body {
   margin: 0;
   color: var(--text);
   background:
-    linear-gradient(180deg, rgba(8, 127, 140, 0.10), transparent 420px),
-    linear-gradient(135deg, rgba(244, 185, 66, 0.10), transparent 520px),
+    linear-gradient(180deg, rgba(247, 248, 251, 0.26), rgba(247, 248, 251, 0.58)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png"),
     var(--bg);
+  background-position: center top;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 button,
@@ -70,8 +73,9 @@ code {
   padding: 28px;
   color: #ffffff;
   background:
-    linear-gradient(115deg, rgba(18, 36, 45, 0.96), rgba(8, 127, 140, 0.88)),
-    url("assets/ticket-pattern.svg");
+    linear-gradient(115deg, rgba(18, 36, 45, 0.88), rgba(8, 127, 140, 0.56)),
+    url("https://file.joymaker.com/game/rooc/web/assets/top-bg-Di0Tc3qm.png");
+  background-position: center;
   background-size: cover;
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -230,6 +234,15 @@ h3 {
   background: var(--accent-dark);
 }
 
+.btn.danger {
+  color: #ffffff;
+  background: var(--red);
+}
+
+.btn.danger:hover {
+  background: #a9342e;
+}
+
 .btn.full {
   width: 100%;
 }
@@ -271,6 +284,10 @@ td .btn.table-action + .btn.table-action {
   gap: 10px;
   width: min(420px, calc(100vw - 28px));
   pointer-events: none;
+}
+
+.toast-stack.is-in-dialog {
+  z-index: 100;
 }
 
 .toast {
@@ -416,10 +433,18 @@ td .btn.table-action + .btn.table-action {
 
 .toolbar-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) auto auto auto;
   gap: 12px;
   align-items: end;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
+}
+
+.toolbar-form .btn {
+  min-height: 42px;
+}
+
+.compact-toolbar {
+  grid-template-columns: minmax(260px, 1fr) auto auto;
 }
 
 label {
@@ -478,9 +503,11 @@ input[readonly] {
   height: 76px;
 }
 
-.console-detail {
+.console-detail,
+.history-detail {
   display: grid;
   gap: 18px;
+  margin-top: 4px;
 }
 
 .stats-grid {
@@ -521,16 +548,13 @@ input[readonly] {
   align-items: start;
 }
 
-.member-editor-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 520px);
-  gap: 18px;
-  align-items: start;
+.single-board {
+  grid-template-columns: 1fr;
 }
 
 .history-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -541,7 +565,6 @@ input[readonly] {
 }
 
 .split-layout + .table-card,
-.member-editor-layout + .table-card,
 .table-card + .table-card {
   margin-top: 18px;
 }
@@ -553,9 +576,769 @@ input[readonly] {
 
 .draw-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 140px) auto;
   gap: 12px;
   align-items: end;
+}
+
+.draw-animation-modal {
+  width: min(640px, calc(100% - 28px));
+}
+
+.draw-animation-modal::backdrop {
+  background: rgba(9, 25, 32, 0.64);
+}
+
+.draw-animation-shell {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border-color: rgba(8, 127, 140, 0.34);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(234, 247, 248, 0.96)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.draw-animation-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(6, 22, 28, 0.46);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.draw-animation-close:hover {
+  background: rgba(6, 22, 28, 0.64);
+}
+
+.draw-animation-modal.is-revealed .draw-animation-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.draw-animation-modal.mode-fireworks .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(244, 185, 66, 0.52);
+  background:
+    radial-gradient(circle at 22% 18%, rgba(244, 185, 66, 0.28), transparent 18%),
+    radial-gradient(circle at 78% 30%, rgba(217, 93, 57, 0.2), transparent 20%),
+    linear-gradient(135deg, rgba(7, 19, 25, 0.88), rgba(8, 78, 88, 0.78)),
+    url("https://file.joymaker.com/game/rooc/web/assets/top-bg-Di0Tc3qm.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.draw-animation-modal.mode-classic .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(8, 127, 140, 0.48);
+  background:
+    radial-gradient(circle at 50% 24%, rgba(244, 185, 66, 0.35), transparent 28%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 16px),
+    linear-gradient(135deg, rgba(9, 28, 36, 0.86), rgba(8, 127, 140, 0.76)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: cover, 32px 32px, cover, cover;
+}
+
+.draw-animation-modal.mode-spotlight .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(244, 185, 66, 0.52);
+  background:
+    radial-gradient(circle at 50% 18%, rgba(244, 185, 66, 0.32), transparent 26%),
+    linear-gradient(90deg, rgba(244, 185, 66, 0.14), transparent 22%, rgba(255, 255, 255, 0.1) 50%, transparent 78%),
+    linear-gradient(135deg, rgba(7, 18, 25, 0.92), rgba(65, 39, 31, 0.76), rgba(8, 79, 86, 0.64)),
+    url("https://file.joymaker.com/game/rooc/web/assets/top-bg-Di0Tc3qm.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.draw-animation-modal.mode-starlight .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.34);
+  background:
+    radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.28), transparent 18%),
+    radial-gradient(circle at 78% 18%, rgba(244, 185, 66, 0.24), transparent 20%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 16px),
+    linear-gradient(135deg, rgba(5, 17, 29, 0.92), rgba(13, 75, 82, 0.76)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: cover, cover, 90px 90px, cover, cover;
+}
+
+.draw-animation-modal.mode-ripple .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(8, 127, 140, 0.58);
+  background:
+    repeating-radial-gradient(circle at 50% 48%, rgba(244, 185, 66, 0.18) 0 1px, transparent 1px 22px),
+    radial-gradient(circle at 50% 48%, rgba(8, 127, 140, 0.38), transparent 34%),
+    linear-gradient(135deg, rgba(4, 20, 27, 0.92), rgba(8, 96, 105, 0.76), rgba(217, 93, 57, 0.46)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: 150px 150px, cover, cover, cover;
+}
+
+.draw-animation-modal.mode-aurora .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(112, 220, 202, 0.48);
+  background:
+    linear-gradient(120deg, transparent 0 16%, rgba(76, 211, 194, 0.28) 25%, transparent 38% 48%, rgba(244, 185, 66, 0.22) 58%, transparent 72%),
+    linear-gradient(145deg, rgba(4, 20, 32, 0.92), rgba(7, 78, 86, 0.76), rgba(33, 42, 73, 0.72)),
+    url("https://file.joymaker.com/game/rooc/web/assets/top-bg-Di0Tc3qm.png");
+  background-position: 0% 50%, center, center;
+  background-size: 180% 180%, cover, cover;
+  animation: drawAuroraShift 7s ease-in-out infinite alternate;
+}
+
+.draw-animation-modal.mode-runes .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(244, 185, 66, 0.5);
+  background:
+    conic-gradient(from 45deg at 50% 50%, rgba(244, 185, 66, 0.16), transparent 18%, rgba(8, 127, 140, 0.16) 34%, transparent 52%, rgba(255, 255, 255, 0.12) 68%, transparent 84%),
+    linear-gradient(135deg, rgba(8, 20, 30, 0.94), rgba(44, 39, 55, 0.76), rgba(8, 83, 91, 0.66)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: 180px 180px, cover, cover;
+}
+
+.draw-animation-modal.mode-confetti .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(217, 93, 57, 0.48);
+  background:
+    radial-gradient(circle at 18% 22%, rgba(244, 185, 66, 0.25) 0 3px, transparent 4px),
+    radial-gradient(circle at 78% 28%, rgba(255, 255, 255, 0.22) 0 2px, transparent 3px),
+    radial-gradient(circle at 42% 72%, rgba(217, 93, 57, 0.22) 0 3px, transparent 4px),
+    linear-gradient(135deg, rgba(7, 24, 34, 0.9), rgba(8, 127, 140, 0.68), rgba(71, 44, 61, 0.66)),
+    url("https://file.joymaker.com/game/rooc/web/assets/top-bg-Di0Tc3qm.png");
+  background-position: 0 0, 40px 20px, 80px 40px, center, center;
+  background-size: 150px 120px, 180px 140px, 170px 130px, cover, cover;
+}
+
+.draw-animation-modal.mode-curtain .draw-animation-shell {
+  color: #ffffff;
+  border-color: rgba(244, 185, 66, 0.5);
+  background:
+    repeating-linear-gradient(90deg, rgba(217, 93, 57, 0.24) 0 24px, rgba(7, 19, 25, 0.08) 24px 48px),
+    radial-gradient(circle at 50% 12%, rgba(244, 185, 66, 0.34), transparent 26%),
+    linear-gradient(135deg, rgba(31, 15, 23, 0.94), rgba(91, 36, 40, 0.74), rgba(8, 72, 78, 0.66)),
+    url("https://file.joymaker.com/game/rooc/web/assets/bg-Cs_lDEOd.png");
+  background-position: center;
+  background-size: 96px 100%, cover, cover, cover;
+}
+
+.draw-animation-stage {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  min-height: 360px;
+  padding: 34px;
+  text-align: center;
+  place-items: center;
+  overflow: hidden;
+}
+
+.draw-animation-stage > :not(.fireworks-layer):not(.draw-portal):not(.draw-effect) {
+  position: relative;
+  z-index: 2;
+}
+
+.draw-animation-stage::before,
+.draw-animation-stage::after {
+  content: "";
+  position: absolute;
+  right: 24px;
+  left: 24px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(8, 127, 140, 0.36), transparent);
+}
+
+.draw-animation-stage::before {
+  top: 22px;
+}
+
+.draw-animation-stage::after {
+  bottom: 22px;
+}
+
+.draw-animation-modal.mode-spotlight .draw-animation-stage::before {
+  top: 0;
+  right: auto;
+  bottom: 0;
+  left: 50%;
+  width: 430px;
+  height: auto;
+  background:
+    conic-gradient(from 204deg at 50% 0%, transparent 0 23deg, rgba(244, 185, 66, 0.22) 24deg 36deg, transparent 37deg 62deg, rgba(255, 255, 255, 0.18) 63deg 75deg, transparent 76deg 360deg);
+  transform: translateX(-50%);
+  filter: blur(1px);
+  animation: drawSpotlightSweep 3.4s ease-in-out infinite;
+}
+
+.draw-animation-modal.mode-spotlight .draw-animation-stage::after {
+  right: 10%;
+  bottom: 24px;
+  left: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(244, 185, 66, 0.72), transparent);
+  filter: drop-shadow(0 0 14px rgba(244, 185, 66, 0.42));
+}
+
+.draw-animation-modal.mode-starlight .draw-animation-stage::before {
+  inset: 0;
+  right: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  background:
+    radial-gradient(circle at 14% 22%, rgba(255, 255, 255, 0.7) 0 1px, transparent 2px),
+    radial-gradient(circle at 32% 78%, rgba(244, 185, 66, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 72% 32%, rgba(255, 255, 255, 0.66) 0 1px, transparent 2px),
+    radial-gradient(circle at 86% 72%, rgba(8, 127, 140, 0.78) 0 1px, transparent 2px);
+  background-size: 132px 132px, 164px 164px, 118px 118px, 148px 148px;
+  opacity: 0.66;
+  animation: drawStarDrift 6s linear infinite;
+}
+
+.draw-animation-modal.mode-starlight .draw-animation-stage::after {
+  right: 16%;
+  bottom: 28px;
+  left: 16%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.64), transparent);
+}
+
+.draw-animation-modal.mode-ripple .draw-animation-stage::before {
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(430px, 82vw);
+  height: auto;
+  aspect-ratio: 1;
+  border: 1px solid rgba(244, 185, 66, 0.34);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(244, 185, 66, 0.18), transparent 36%),
+    repeating-radial-gradient(circle, transparent 0 24px, rgba(255, 255, 255, 0.12) 25px 26px);
+  box-shadow:
+    0 0 0 34px rgba(8, 127, 140, 0.08),
+    0 0 0 78px rgba(244, 185, 66, 0.06);
+  transform: translate(-50%, -50%) scale(0.9);
+  animation: drawRippleBreathe 3.2s ease-in-out infinite;
+}
+
+.draw-animation-modal.mode-ripple .draw-animation-stage::after {
+  right: 12%;
+  bottom: 26px;
+  left: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(8, 127, 140, 0.74), rgba(244, 185, 66, 0.68), transparent);
+  filter: drop-shadow(0 0 14px rgba(8, 127, 140, 0.42));
+}
+
+.draw-animation-modal.mode-aurora .draw-animation-stage::before {
+  inset: -24%;
+  right: -24%;
+  left: -24%;
+  width: auto;
+  height: auto;
+  background:
+    linear-gradient(105deg, transparent 0 22%, rgba(109, 225, 209, 0.24) 32%, transparent 44% 52%, rgba(244, 185, 66, 0.18) 64%, transparent 78%),
+    linear-gradient(72deg, transparent 0 28%, rgba(255, 255, 255, 0.12) 38%, transparent 50%);
+  filter: blur(8px);
+  opacity: 0.84;
+  transform: translateX(-8%) rotate(-6deg);
+  animation: drawAuroraFlow 6s ease-in-out infinite alternate;
+}
+
+.draw-animation-modal.mode-aurora .draw-animation-stage::after {
+  right: 14%;
+  bottom: 26px;
+  left: 14%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(109, 225, 209, 0.7), rgba(244, 185, 66, 0.54), transparent);
+}
+
+.draw-animation-modal.mode-runes .draw-animation-stage::before {
+  inset: 0;
+  right: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  background:
+    linear-gradient(45deg, transparent 46%, rgba(244, 185, 66, 0.22) 47% 49%, transparent 50%),
+    linear-gradient(-45deg, transparent 46%, rgba(8, 127, 140, 0.2) 47% 49%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18) 0 2px, transparent 3px);
+  background-size: 74px 74px, 74px 74px, 74px 74px;
+  opacity: 0.48;
+  animation: drawRuneDrift 9s linear infinite;
+}
+
+.draw-animation-modal.mode-runes .draw-animation-stage::after {
+  top: 24px;
+  right: 18%;
+  left: 18%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(244, 185, 66, 0.74), transparent);
+  filter: drop-shadow(0 0 12px rgba(244, 185, 66, 0.36));
+}
+
+.draw-animation-modal.mode-confetti .draw-animation-stage::before {
+  inset: 0;
+  right: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(244, 185, 66, 0.82) 0 2px, transparent 3px),
+    radial-gradient(circle at 62% 16%, rgba(255, 255, 255, 0.74) 0 2px, transparent 3px),
+    radial-gradient(circle at 84% 66%, rgba(217, 93, 57, 0.78) 0 3px, transparent 4px),
+    linear-gradient(45deg, transparent 47%, rgba(244, 185, 66, 0.18) 48% 52%, transparent 53%);
+  background-size: 130px 120px, 180px 130px, 150px 150px, 68px 68px;
+  opacity: 0.62;
+  animation: drawConfettiDrift 5.5s linear infinite;
+}
+
+.draw-animation-modal.mode-confetti .draw-animation-stage::after {
+  right: 10%;
+  bottom: 26px;
+  left: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(217, 93, 57, 0.62), rgba(244, 185, 66, 0.68), transparent);
+}
+
+.draw-animation-modal.mode-curtain .draw-animation-stage::before {
+  inset: 0;
+  right: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  background:
+    repeating-linear-gradient(90deg, rgba(217, 93, 57, 0.16) 0 18px, rgba(20, 8, 16, 0.2) 18px 36px),
+    radial-gradient(circle at 50% 6%, rgba(244, 185, 66, 0.32), transparent 32%);
+  opacity: 0.72;
+  transform-origin: top center;
+  animation: drawCurtainSway 4.6s ease-in-out infinite alternate;
+}
+
+.draw-animation-modal.mode-curtain .draw-animation-stage::after {
+  right: 16%;
+  bottom: 26px;
+  left: 16%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(244, 185, 66, 0.78), transparent);
+  filter: drop-shadow(0 0 18px rgba(244, 185, 66, 0.38));
+}
+
+.fireworks-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.fireworks-layer canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.draw-portal {
+  position: absolute;
+  z-index: 1;
+  width: min(360px, 78vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.draw-portal span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(244, 185, 66, 0.45);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-right-color: rgba(217, 93, 57, 0.72);
+  border-radius: inherit;
+  filter: drop-shadow(0 0 18px rgba(244, 185, 66, 0.34));
+  animation: drawPortalSpin 8s linear infinite;
+}
+
+.draw-portal span:nth-child(2) {
+  inset: 32px;
+  border-color: rgba(8, 127, 140, 0.52);
+  border-bottom-color: rgba(244, 185, 66, 0.92);
+  animation-direction: reverse;
+  animation-duration: 5.8s;
+}
+
+.draw-portal span:nth-child(3) {
+  inset: 64px;
+  border-color: rgba(255, 255, 255, 0.22);
+  border-left-color: rgba(255, 255, 255, 0.72);
+  animation-duration: 3.8s;
+}
+
+.draw-animation-modal.mode-fireworks .draw-portal {
+  opacity: 1;
+}
+
+.draw-effect {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: min(330px, 76vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.draw-lightbar {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  width: min(360px, 100%);
+}
+
+.draw-lightbar span {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(8, 127, 140, 0.2);
+  animation: drawLight 0.78s ease-in-out infinite;
+}
+
+.draw-lightbar span:nth-child(2) {
+  animation-delay: 0.08s;
+}
+
+.draw-lightbar span:nth-child(3) {
+  animation-delay: 0.16s;
+}
+
+.draw-lightbar span:nth-child(4) {
+  animation-delay: 0.24s;
+}
+
+.draw-lightbar span:nth-child(5) {
+  animation-delay: 0.32s;
+}
+
+.draw-lightbar span:nth-child(6) {
+  animation-delay: 0.4s;
+}
+
+.draw-animation-stage h3 {
+  margin: 0;
+  max-width: 100%;
+  font-size: 1.35rem;
+}
+
+.draw-animation-modal.mode-fireworks .draw-animation-stage h3,
+.draw-animation-modal.mode-classic .draw-animation-stage h3,
+.draw-animation-modal.mode-spotlight .draw-animation-stage h3,
+.draw-animation-modal.mode-starlight .draw-animation-stage h3,
+.draw-animation-modal.mode-ripple .draw-animation-stage h3,
+.draw-animation-modal.mode-aurora .draw-animation-stage h3,
+.draw-animation-modal.mode-runes .draw-animation-stage h3,
+.draw-animation-modal.mode-confetti .draw-animation-stage h3,
+.draw-animation-modal.mode-curtain .draw-animation-stage h3,
+.draw-animation-modal.mode-classic .section-label,
+.draw-animation-modal.mode-spotlight .section-label,
+.draw-animation-modal.mode-starlight .section-label,
+.draw-animation-modal.mode-ripple .section-label,
+.draw-animation-modal.mode-aurora .section-label,
+.draw-animation-modal.mode-runes .section-label,
+.draw-animation-modal.mode-confetti .section-label,
+.draw-animation-modal.mode-curtain .section-label,
+.draw-animation-modal.mode-fireworks .section-label {
+  color: #ffffff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+}
+
+.draw-roller {
+  position: relative;
+  width: min(460px, 100%);
+  min-height: 86px;
+  display: grid;
+  place-items: center;
+  padding: 18px 24px;
+  border: 1px solid rgba(8, 127, 140, 0.22);
+  border-radius: 8px;
+  color: #0f2730;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 18px 46px rgba(28, 40, 51, 0.16);
+  font-size: 1.55rem;
+  font-weight: 900;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  animation: drawCardPulse 0.72s ease-in-out infinite;
+}
+
+.draw-animation-modal.mode-fireworks .draw-roller {
+  color: #ffffff;
+  border-color: rgba(244, 185, 66, 0.48);
+  background: rgba(6, 22, 28, 0.58);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.28),
+    0 0 34px rgba(244, 185, 66, 0.18);
+}
+
+.draw-animation-modal.mode-classic .draw-roller {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(6, 22, 28, 0.58);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.28),
+    0 0 34px rgba(8, 127, 140, 0.18);
+}
+
+.draw-animation-modal.mode-spotlight .draw-roller,
+.draw-animation-modal.mode-starlight .draw-roller,
+.draw-animation-modal.mode-ripple .draw-roller,
+.draw-animation-modal.mode-aurora .draw-roller,
+.draw-animation-modal.mode-runes .draw-roller,
+.draw-animation-modal.mode-confetti .draw-roller,
+.draw-animation-modal.mode-curtain .draw-roller {
+  color: #ffffff;
+  background: rgba(6, 22, 28, 0.62);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.3),
+    0 0 34px rgba(244, 185, 66, 0.16);
+}
+
+.draw-animation-modal.mode-spotlight .draw-roller {
+  border-color: rgba(244, 185, 66, 0.62);
+}
+
+.draw-animation-modal.mode-starlight .draw-roller {
+  border-color: rgba(255, 255, 255, 0.38);
+}
+
+.draw-animation-modal.mode-ripple .draw-roller,
+.draw-animation-modal.mode-aurora .draw-roller {
+  border-color: rgba(8, 127, 140, 0.74);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.3),
+    0 0 34px rgba(8, 127, 140, 0.2);
+}
+
+.draw-animation-modal.mode-runes .draw-roller,
+.draw-animation-modal.mode-curtain .draw-roller {
+  border-color: rgba(244, 185, 66, 0.58);
+}
+
+.draw-animation-modal.mode-confetti .draw-roller {
+  border-color: rgba(217, 93, 57, 0.54);
+}
+
+.draw-roller::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(244, 185, 66, 0.2) 45%, transparent 72%);
+  transform: translateX(-100%);
+  animation: drawShine 1.15s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.draw-animation-modal.mode-fireworks .draw-roller::after {
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.28) 45%, transparent 72%);
+}
+
+.draw-result-list {
+  display: grid;
+  gap: 8px;
+  width: min(460px, 100%);
+}
+
+.draw-result-item {
+  position: relative;
+  padding: 10px 12px;
+  border: 1px solid rgba(217, 93, 57, 0.28);
+  border-radius: 8px;
+  color: #6f2c1e;
+  background: rgba(255, 246, 242, 0.92);
+  font-weight: 900;
+  overflow: hidden;
+  animation: drawReveal 0.28s ease both;
+}
+
+.draw-animation-modal.has-multiple-results .draw-result-list {
+  width: min(500px, 100%);
+  gap: 10px;
+}
+
+.draw-animation-modal.has-multiple-results .draw-roller {
+  display: none;
+}
+
+.draw-animation-modal.has-multiple-results .draw-result-item {
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  padding: 13px 18px;
+  font-size: 1.04rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.draw-animation-modal.has-multiple-results .draw-result-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.24) 45%, transparent 72%);
+  transform: translateX(-100%);
+  animation: drawShine 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.draw-animation-modal.mode-fireworks .draw-result-item {
+  color: #fff6e3;
+  border-color: rgba(244, 185, 66, 0.5);
+  background: rgba(6, 22, 28, 0.72);
+  box-shadow: 0 0 24px rgba(244, 185, 66, 0.16);
+}
+
+.draw-animation-modal.mode-classic .draw-result-item {
+  color: #fff6e3;
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(6, 22, 28, 0.72);
+  box-shadow: 0 0 24px rgba(244, 185, 66, 0.14);
+}
+
+.draw-animation-modal.mode-spotlight .draw-result-item,
+.draw-animation-modal.mode-starlight .draw-result-item,
+.draw-animation-modal.mode-ripple .draw-result-item,
+.draw-animation-modal.mode-aurora .draw-result-item,
+.draw-animation-modal.mode-runes .draw-result-item,
+.draw-animation-modal.mode-confetti .draw-result-item,
+.draw-animation-modal.mode-curtain .draw-result-item {
+  color: #fff6e3;
+  background: rgba(6, 22, 28, 0.74);
+  box-shadow: 0 0 24px rgba(244, 185, 66, 0.14);
+}
+
+.draw-animation-modal.mode-spotlight .draw-result-item {
+  border-color: rgba(244, 185, 66, 0.5);
+}
+
+.draw-animation-modal.mode-starlight .draw-result-item {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.draw-animation-modal.mode-ripple .draw-result-item,
+.draw-animation-modal.mode-aurora .draw-result-item {
+  border-color: rgba(8, 127, 140, 0.58);
+}
+
+.draw-animation-modal.mode-runes .draw-result-item,
+.draw-animation-modal.mode-curtain .draw-result-item {
+  border-color: rgba(244, 185, 66, 0.5);
+}
+
+.draw-animation-modal.mode-confetti .draw-result-item {
+  border-color: rgba(217, 93, 57, 0.5);
+}
+
+.draw-progress {
+  width: min(420px, 100%);
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(8, 127, 140, 0.14);
+  overflow: hidden;
+}
+
+.draw-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--gold), var(--accent));
+  animation: drawProgress 1s ease-in-out infinite;
+}
+
+.draw-animation-modal.is-revealed .draw-lightbar span,
+.draw-animation-modal.is-revealed .draw-progress span {
+  animation-play-state: paused;
+}
+
+.draw-animation-modal.is-revealed .draw-roller {
+  border-color: rgba(217, 93, 57, 0.35);
+  animation: drawRevealCard 0.42s ease both;
+}
+
+.draw-animation-modal.mode-fireworks.is-revealed .draw-roller {
+  border-color: rgba(244, 185, 66, 0.7);
+}
+
+.select2-container {
+  width: 100% !important;
+  min-width: 0;
+}
+
+.select2-container--default .select2-selection--single {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+  width: 100%;
+  padding: 0 34px 0 12px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__placeholder {
+  color: #8a97a5;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.select2-container--default.select2-container--focus .select2-selection--single,
+.select2-container--default.select2-container--open .select2-selection--single {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(8, 127, 140, 0.13);
+}
+
+.select2-dropdown {
+  z-index: 1400;
+  border-color: var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.select2-search--dropdown {
+  padding: 8px;
+}
+
+.select2-container--default .select2-search--dropdown .select2-search__field {
+  min-height: 38px;
+  border-color: var(--line);
+  border-radius: 8px;
+}
+
+.prize-modal .select2-results__options {
+  max-height: min(280px, 42vh);
 }
 
 .pending-card {
@@ -632,6 +1415,23 @@ input[readonly] {
   gap: 10px;
 }
 
+.selected-prize {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(8, 127, 140, 0.22);
+  border-radius: 8px;
+  color: var(--muted);
+  background: #eaf7f8;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.selected-prize strong {
+  color: var(--text);
+  line-height: 1.45;
+}
+
 .rule-list {
   display: grid;
   gap: 10px;
@@ -643,6 +1443,24 @@ input[readonly] {
 
 .table-head.with-form {
   align-items: end;
+}
+
+.member-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.member-list-toolbar > .btn {
+  flex: 0 0 auto;
+}
+
+.member-list-toolbar .inline-form {
+  flex: 1 1 560px;
+  min-width: min(560px, 100%);
 }
 
 .inline-form {
@@ -691,6 +1509,44 @@ th {
   background: var(--surface-2);
 }
 
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 900;
+  text-align: left;
+}
+
+.sort-button svg {
+  width: 14px;
+  height: 14px;
+  color: #8090a2;
+}
+
+.sort-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.sort-button.is-active {
+  color: var(--primary-dark);
+}
+
+.sort-button.is-active svg {
+  color: var(--primary);
+}
+
 tr:last-child td {
   border-bottom: 0;
 }
@@ -698,6 +1554,29 @@ tr:last-child td {
 .empty-cell {
   color: var(--muted);
   text-align: center;
+}
+
+.table-actions-cell {
+  white-space: nowrap;
+}
+
+.pending-list {
+  display: grid;
+  gap: 12px;
+}
+
+.pending-item {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.pending-summary h4 {
+  margin: 0 0 4px;
+  color: var(--text);
 }
 
 .table-badge {
@@ -735,11 +1614,21 @@ tr:last-child td {
   width: min(460px, calc(100% - 28px));
 }
 
+.prize-modal {
+  width: min(560px, calc(100% - 28px));
+  overflow: visible;
+}
+
+.member-modal {
+  width: min(560px, calc(100% - 28px));
+}
+
 .modal::backdrop {
   background: rgba(16, 36, 45, 0.48);
 }
 
 .modal-shell {
+  position: relative;
   display: grid;
   gap: 16px;
   padding: 20px;
@@ -747,6 +1636,14 @@ tr:last-child td {
   border-radius: 8px;
   background: #ffffff;
   box-shadow: var(--shadow);
+}
+
+.prize-modal .modal-shell {
+  overflow: visible;
+}
+
+.prize-modal .button-row {
+  justify-content: flex-end;
 }
 
 .modal-head {
@@ -835,7 +1732,6 @@ tr:last-child td {
   .stats-grid,
   .board-grid,
   .split-layout,
-  .member-editor-layout,
   .history-grid,
   .field-row,
   .field-with-action,
@@ -848,6 +1744,21 @@ tr:last-child td {
 
   .modal-shell {
     padding: 16px;
+  }
+
+  .member-list-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .member-list-toolbar > .btn,
+  .member-list-toolbar .inline-form {
+    width: 100%;
+  }
+
+  .member-list-toolbar .inline-form {
+    min-width: 0;
   }
 
   .inline-form {
@@ -870,5 +1781,219 @@ tr:last-child td {
     right: 10px;
     left: 10px;
     width: auto;
+  }
+}
+
+@keyframes drawLight {
+  0%,
+  100% {
+    background: rgba(8, 127, 140, 0.18);
+    transform: scaleY(1);
+  }
+
+  50% {
+    background: rgba(244, 185, 66, 0.9);
+    transform: scaleY(1.45);
+  }
+}
+
+@keyframes drawCardPulse {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes drawShine {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes drawProgress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes drawPortalSpin {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+
+  50% {
+    transform: rotate(180deg) scale(1.04);
+  }
+
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes drawSpotlightSweep {
+  0%,
+  100% {
+    opacity: 0.68;
+    transform: translateX(-50%) rotate(-6deg);
+  }
+
+  50% {
+    opacity: 0.95;
+    transform: translateX(-50%) rotate(6deg);
+  }
+}
+
+@keyframes drawStarDrift {
+  from {
+    background-position: 0 0, 0 0, 0 0, 0 0;
+  }
+
+  to {
+    background-position: 132px 132px, -164px 164px, 118px -118px, -148px -148px;
+  }
+}
+
+@keyframes drawRippleBreathe {
+  0%,
+  100% {
+    opacity: 0.54;
+    transform: translate(-50%, -50%) scale(0.88) rotate(0deg);
+  }
+
+  50% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1.04) rotate(10deg);
+  }
+}
+
+@keyframes drawAuroraShift {
+  from {
+    background-position: 0% 48%, center, center;
+  }
+
+  to {
+    background-position: 100% 52%, center, center;
+  }
+}
+
+@keyframes drawAuroraFlow {
+  from {
+    transform: translateX(-8%) rotate(-6deg);
+  }
+
+  to {
+    transform: translateX(8%) rotate(6deg);
+  }
+}
+
+@keyframes drawRuneDrift {
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+
+  to {
+    background-position: 74px 74px, -74px 74px, 37px -37px;
+  }
+}
+
+@keyframes drawConfettiDrift {
+  from {
+    background-position: 0 0, 0 0, 0 0, 0 0;
+  }
+
+  to {
+    background-position: 130px 120px, -180px 130px, 150px -150px, 68px 68px;
+  }
+}
+
+@keyframes drawCurtainSway {
+  from {
+    transform: skewX(-1.5deg) scaleX(1.02);
+  }
+
+  to {
+    transform: skewX(1.5deg) scaleX(1);
+  }
+}
+
+@keyframes drawReveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawRevealCard {
+  0% {
+    transform: scale(0.98);
+  }
+
+  60% {
+    transform: scale(1.03);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .draw-animation-stage {
+    min-height: 300px;
+    padding: 26px 18px;
+  }
+
+  .draw-effect {
+    width: min(280px, 82vw);
+  }
+
+  .draw-animation-close {
+    top: 10px;
+    right: 10px;
+  }
+
+  .draw-roller {
+    min-height: 76px;
+    padding: 16px;
+    font-size: 1.18rem;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draw-lightbar span,
+  .draw-roller,
+  .draw-roller::after,
+  .draw-progress span,
+  .draw-result-item,
+  .draw-result-item::after,
+  .draw-animation-modal.is-revealed .draw-roller,
+  .draw-portal span,
+  .draw-animation-modal.mode-aurora .draw-animation-shell,
+  .draw-animation-modal.mode-spotlight .draw-animation-stage::before,
+  .draw-animation-modal.mode-starlight .draw-animation-stage::before,
+  .draw-animation-modal.mode-ripple .draw-animation-stage::before,
+  .draw-animation-modal.mode-aurora .draw-animation-stage::before,
+  .draw-animation-modal.mode-runes .draw-animation-stage::before,
+  .draw-animation-modal.mode-confetti .draw-animation-stage::before,
+  .draw-animation-modal.mode-curtain .draw-animation-stage::before {
+    animation: none;
   }
 }
