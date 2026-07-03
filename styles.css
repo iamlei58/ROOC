@@ -95,6 +95,14 @@ code {
   filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.22));
 }
 
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .eyebrow,
 .section-label {
   margin: 0 0 6px;
@@ -144,6 +152,16 @@ h3 {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.12);
   white-space: nowrap;
+}
+
+.hero-logout {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.hero-logout:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .status-badge {
@@ -1701,6 +1719,10 @@ tr:last-child td {
   .hero {
     min-height: 220px;
     padding: 22px;
+  }
+
+  .hero-actions {
+    justify-content: flex-start;
   }
 
   .brand {

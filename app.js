@@ -21,6 +21,8 @@ const state = {
   event: null,
   appAdminPin: "",
   adminPinPrompt: null,
+  adminPinMode: "",
+  adminPinRequired: false,
   occupations: [],
   members: [],
   openEvents: [],
@@ -76,10 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   hydrateEventTitle();
   initializeSearchableSelects();
   rememberToastStackHome();
-  if (state.appAdminPin) {
-    void refreshOpenEvents();
-    void refreshHistoryEvents();
-  }
+  await initializeAdminGate();
   refreshIcons();
 });
 
@@ -145,6 +144,7 @@ function bindForms() {
   $("#export-history-awards").addEventListener("click", exportHistoryAwardsCsv);
   $("#delete-history-event").addEventListener("click", () => deleteLoadedEvent("history"));
   $("#change-admin-pin").addEventListener("click", openChangeAdminPinDialog);
+  $("#logout-admin").addEventListener("click", handleAdminLogout);
   $("#admin-pin-form").addEventListener("submit", handleAdminPinSubmit);
   $("#change-admin-pin-form").addEventListener("submit", handleChangeAdminPin);
   $("#cancel-admin-pin").addEventListener("click", cancelAdminPinPrompt);
@@ -213,7 +213,40 @@ function hydrateStoredPins() {
   state.appAdminPin = readSessionValue(STORAGE_KEYS.appAdminPin);
 
   if (state.appAdminPin) {
-    $("#member-status").textContent = "PIN 已暫存";
+    $("#member-status").textContent = "已登入";
+    $("#logout-admin").hidden = false;
+  }
+}
+
+async function initializeAdminGate() {
+  if (!state.client) return;
+
+  if (state.appAdminPin) {
+    try {
+      await validateAppAdminPassword(state.appAdminPin);
+      await loadAdminBootstrapData();
+      return;
+    } catch (error) {
+      rememberInvalidPins(error);
+      showToast(friendlyError(error.message), "error");
+    }
+  }
+
+  await requestAppAdminPin({ mode: "login", required: true });
+}
+
+async function validateAppAdminPassword(password) {
+  await rpc("initialize_app_admin", { p_admin_pin: password });
+}
+
+async function loadAdminBootstrapData() {
+  await refreshOpenEvents();
+  await refreshHistoryEvents();
+  await refreshPrizeProviderMembers();
+
+  if ($("#panel-members")?.classList.contains("is-active")) {
+    await loadOccupations();
+    await loadMembers();
   }
 }
 
@@ -308,11 +341,13 @@ function writeSessionValue(key, value) {
 function rememberAppAdminPin(pin) {
   state.appAdminPin = pin;
   writeSessionValue(STORAGE_KEYS.appAdminPin, pin);
-  $("#member-status").textContent = "PIN 已暫存";
+  $("#member-status").textContent = "已登入";
+  $("#logout-admin").hidden = false;
 }
 
 function forgetAppAdminPin() {
   state.appAdminPin = "";
+  state.event = null;
   state.openEvents = [];
   state.historyEvents = [];
   state.historyEvent = null;
@@ -323,6 +358,10 @@ function forgetAppAdminPin() {
   writeLocalValue(STORAGE_KEYS.eventSlug, "");
   writeLocalValue(STORAGE_KEYS.eventTitle, "");
   $("#member-status").textContent = "未載入";
+  $("#logout-admin").hidden = true;
+  $("#console-detail").hidden = true;
+  $("#console-empty").hidden = false;
+  $("#console-status").textContent = "未載入";
   renderOpenEventOptions();
   renderHistoryEventOptions();
   clearHistoryDetail();
@@ -1580,18 +1619,14 @@ async function handleAdminPinSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
-  const pin = cleanRequired(data.get("app_admin_pin"), "請輸入成員管理 PIN。");
+  const pin = cleanRequired(data.get("app_admin_pin"), "請輸入管理密碼。");
 
   await withBusy(form, async () => {
-    await rpc("initialize_app_admin", { p_admin_pin: pin });
+    await validateAppAdminPassword(pin);
     rememberAppAdminPin(pin);
-    await refreshOpenEvents();
-    await refreshHistoryEvents();
-    await refreshPrizeProviderMembers();
-    await loadOccupations();
-    await loadMembers();
+    await loadAdminBootstrapData();
     closeAdminPinDialog(pin);
-    showToast("成員管理 PIN 已驗證。", "success");
+    showToast("管理密碼已驗證。", "success");
   });
 }
 
@@ -1599,17 +1634,17 @@ async function handleChangeAdminPin(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
-  const currentPin = cleanRequired(data.get("current_pin"), "請輸入目前 PIN。");
-  const newPin = cleanRequired(data.get("new_pin"), "請輸入新 PIN。");
-  const confirmPin = cleanRequired(data.get("confirm_pin"), "請再次輸入新 PIN。");
+  const currentPin = cleanRequired(data.get("current_pin"), "請輸入目前密碼。");
+  const newPin = cleanRequired(data.get("new_pin"), "請輸入新密碼。");
+  const confirmPin = cleanRequired(data.get("confirm_pin"), "請再次輸入新密碼。");
 
   if (newPin.length < 4) {
-    showToast("新 PIN 至少需要 4 個字元。", "error");
+    showToast("新密碼至少需要 4 個字元。", "error");
     return;
   }
 
   if (newPin !== confirmPin) {
-    showToast("兩次新 PIN 不一致。", "error");
+    showToast("兩次新密碼不一致。", "error");
     return;
   }
 
@@ -1625,8 +1660,17 @@ async function handleChangeAdminPin(event) {
     await loadOccupations();
     await loadMembers();
     closeAdminPinDialog();
-    showToast("成員管理 PIN 已修改。", "success");
+    showToast("管理密碼已修改。", "success");
   });
+}
+
+async function handleAdminLogout() {
+  forgetAppAdminPin();
+  showToast("已登出。", "success");
+
+  if (state.client) {
+    await requestAppAdminPin({ mode: "login", required: true });
+  }
 }
 
 async function ensureAppAdminPin() {
@@ -1636,12 +1680,12 @@ async function ensureAppAdminPin() {
 
   const pin = await requestAppAdminPin();
   if (!pin) {
-    throw new Error("需要成員管理 PIN。");
+    throw new Error("需要管理密碼。");
   }
   return pin;
 }
 
-function requestAppAdminPin() {
+function requestAppAdminPin(options = {}) {
   if (state.adminPinPrompt) {
     return state.adminPinPrompt.promise;
   }
@@ -1650,7 +1694,9 @@ function requestAppAdminPin() {
     state.adminPinPrompt = { resolve, promise: null };
   });
   state.adminPinPrompt.promise = promise;
-  openAdminPinDialog("verify");
+  state.adminPinMode = options.mode || "verify";
+  state.adminPinRequired = Boolean(options.required);
+  openAdminPinDialog(state.adminPinMode);
   return promise;
 }
 
@@ -1663,8 +1709,14 @@ function openAdminPinDialog(mode) {
   const verifyForm = $("#admin-pin-form");
   const changeForm = $("#change-admin-pin-form");
   const isChange = mode === "change";
+  const isLogin = mode === "login";
+  const isRequired = Boolean(state.adminPinRequired);
 
-  $("#admin-pin-title").textContent = isChange ? "修改成員管理 PIN" : "成員管理 PIN";
+  $("#admin-pin-title").textContent = isChange ? "修改管理密碼" : isLogin ? "後台登入" : "管理密碼";
+  $("#admin-pin-label").textContent = isLogin ? "輸入管理密碼" : "首次設定或驗證管理密碼";
+  $("#admin-pin-submit-label").textContent = isLogin ? "登入" : "確認";
+  $("#cancel-admin-pin").hidden = isRequired;
+  $("#dismiss-admin-pin").hidden = isRequired;
   verifyForm.hidden = isChange;
   changeForm.hidden = !isChange;
   verifyForm.reset();
@@ -1680,12 +1732,15 @@ function openAdminPinDialog(mode) {
 }
 
 function cancelAdminPinPrompt() {
+  if (state.adminPinRequired) return;
   closeAdminPinDialog(null);
 }
 
 function closeAdminPinDialog(resolveValue = null) {
   const prompt = state.adminPinPrompt;
   state.adminPinPrompt = null;
+  state.adminPinMode = "";
+  state.adminPinRequired = false;
   $("#admin-pin-form").reset();
   $("#change-admin-pin-form").reset();
   closeModalDialog($("#admin-pin-dialog"));
@@ -2225,7 +2280,9 @@ function rememberInvalidPins(error) {
     message.includes("App admin PIN is invalid") ||
     message.includes("App admin PIN is not initialized") ||
     message.includes("成員管理 PIN 不正確") ||
-    message.includes("尚未設定成員管理 PIN")
+    message.includes("尚未設定成員管理 PIN") ||
+    message.includes("管理密碼不正確") ||
+    message.includes("尚未設定管理密碼")
   ) {
     forgetAppAdminPin();
   }
@@ -2233,9 +2290,9 @@ function rememberInvalidPins(error) {
 
 function friendlyError(message) {
   const text = String(message || "");
-  if (text.includes("App admin PIN is invalid") || text.includes("成員管理 PIN 不正確")) return "成員管理 PIN 不正確。";
-  if (text.includes("App admin PIN is not initialized") || text.includes("尚未設定成員管理 PIN")) return "尚未設定成員管理 PIN。";
-  if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元")) return "成員管理 PIN 至少需要 4 個字元。";
+  if (text.includes("App admin PIN is invalid") || text.includes("成員管理 PIN 不正確") || text.includes("管理密碼不正確")) return "管理密碼不正確。";
+  if (text.includes("App admin PIN is not initialized") || text.includes("尚未設定成員管理 PIN") || text.includes("尚未設定管理密碼")) return "尚未設定管理密碼。";
+  if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元") || text.includes("管理密碼至少需要 4 個字元")) return "管理密碼至少需要 4 個字元。";
   if (text.includes("Raffle event not found") || text.includes("找不到活動")) return "找不到活動。";
   if (text.includes("Raffle event title already exists") || text.includes("活動名稱已存在")) return "活動名稱已存在。";
   if (text.includes("Member number already exists") || text.includes("成員編號已存在")) return "成員編號已存在。";

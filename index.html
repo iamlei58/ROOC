@@ -26,9 +26,15 @@
             <h1>星辰</h1>
           </div>
         </div>
-        <div class="connection-pill" id="connection-pill">
-          <span class="dot"></span>
-          <span id="connection-text">尚未連線</span>
+        <div class="hero-actions">
+          <div class="connection-pill" id="connection-pill">
+            <span class="dot"></span>
+            <span id="connection-text">尚未連線</span>
+          </div>
+          <button class="btn secondary hero-logout" type="button" id="logout-admin" hidden>
+            <i data-lucide="log-out"></i>
+            <span>登出</span>
+          </button>
         </div>
       </header>
 
@@ -488,7 +494,7 @@
               <span class="status-badge" id="member-status">未載入</span>
               <button class="btn secondary" type="button" id="change-admin-pin">
                 <i data-lucide="key-round"></i>
-                <span>修改 PIN</span>
+                <span>修改密碼</span>
               </button>
             </div>
           </div>
@@ -722,22 +728,22 @@
               <div class="modal-head">
                 <div>
                   <p class="section-label">Admin</p>
-                  <h3 id="admin-pin-title">成員管理 PIN</h3>
+                  <h3 id="admin-pin-title">後台登入</h3>
                 </div>
-                <button class="btn icon-button" type="button" id="cancel-admin-pin" aria-label="取消 PIN 驗證">
+                <button class="btn icon-button" type="button" id="cancel-admin-pin" aria-label="取消管理密碼驗證">
                   <i data-lucide="x"></i>
                 </button>
               </div>
 
               <form class="form-stack" id="admin-pin-form">
                 <label>
-                  <span>首次設定或驗證 PIN</span>
+                  <span id="admin-pin-label">輸入管理密碼</span>
                   <input name="app_admin_pin" type="password" minlength="4" maxlength="80" autocomplete="current-password" required>
                 </label>
                 <div class="button-row">
                   <button class="btn primary" type="submit">
                     <i data-lucide="shield-check"></i>
-                    <span>確認</span>
+                    <span id="admin-pin-submit-label">登入</span>
                   </button>
                   <button class="btn secondary" type="button" id="dismiss-admin-pin">
                     <i data-lucide="x"></i>
@@ -748,21 +754,21 @@
 
               <form class="form-stack" id="change-admin-pin-form" hidden>
                 <label>
-                  <span>目前 PIN</span>
+                  <span>目前密碼</span>
                   <input name="current_pin" type="password" minlength="4" maxlength="80" autocomplete="current-password" required>
                 </label>
                 <label>
-                  <span>新 PIN</span>
+                  <span>新密碼</span>
                   <input name="new_pin" type="password" minlength="4" maxlength="80" autocomplete="new-password" required>
                 </label>
                 <label>
-                  <span>再次輸入新 PIN</span>
+                  <span>再次輸入新密碼</span>
                   <input name="confirm_pin" type="password" minlength="4" maxlength="80" autocomplete="new-password" required>
                 </label>
                 <div class="button-row">
                   <button class="btn primary" type="submit">
                     <i data-lucide="key-round"></i>
-                    <span>更新 PIN</span>
+                    <span>更新密碼</span>
                   </button>
                   <button class="btn secondary" type="button" id="dismiss-change-admin-pin">
                     <i data-lucide="x"></i>

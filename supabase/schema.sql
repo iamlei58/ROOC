@@ -172,11 +172,11 @@ begin
   where id = true;
 
   if not found then
-    raise exception '尚未設定成員管理 PIN。';
+    raise exception '尚未設定管理密碼。';
   end if;
 
   if p_admin_pin is null or extensions.crypt(p_admin_pin, v_hash) <> v_hash then
-    raise exception '成員管理 PIN 不正確。';
+    raise exception '管理密碼不正確。';
   end if;
 end;
 $$;
@@ -217,7 +217,7 @@ begin
   p_admin_pin := nullif(trim(p_admin_pin), '');
 
   if p_admin_pin is null or char_length(p_admin_pin) < 4 then
-    raise exception '成員管理 PIN 至少需要 4 個字元。';
+    raise exception '管理密碼至少需要 4 個字元。';
   end if;
 
   select admin_pin_hash
@@ -227,17 +227,17 @@ begin
 
   if found then
     if extensions.crypt(p_admin_pin, v_hash) <> v_hash then
-      raise exception '成員管理 PIN 不正確。';
+      raise exception '管理密碼不正確。';
     end if;
 
-    return query select true, '成員管理 PIN 驗證成功。';
+    return query select true, '管理密碼驗證成功。';
     return;
   end if;
 
   insert into public.raffle_app_config (id, admin_pin_hash)
   values (true, extensions.crypt(p_admin_pin, extensions.gen_salt('bf')));
 
-  return query select true, '成員管理 PIN 已設定。';
+  return query select true, '管理密碼已設定。';
 end;
 $$;
 
@@ -255,7 +255,7 @@ begin
   p_new_pin := nullif(trim(p_new_pin), '');
 
   if p_new_pin is null or char_length(p_new_pin) < 4 then
-    raise exception '成員管理 PIN 至少需要 4 個字元。';
+    raise exception '管理密碼至少需要 4 個字元。';
   end if;
 
   perform public.assert_app_admin(p_current_pin);
@@ -266,7 +266,7 @@ begin
     updated_at = now()
   where id = true;
 
-  return query select true, '成員管理 PIN 已更新。';
+  return query select true, '管理密碼已更新。';
 end;
 $$;
 

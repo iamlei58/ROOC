@@ -39,7 +39,7 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 - `raffle_prizes`：獎項與提供者
 - `raffle_draws`：每一次抽出與處理結果
 - `raffle_exclusions`：每場活動的排除名單
-- `raffle_app_config`：成員管理 PIN hash
+- `raffle_app_config`：管理密碼 hash
 
 所有前端操作都透過 RPC 執行。資料表已啟用 RLS 並撤銷 anon/authenticated 的直接表格存取。
 
@@ -50,9 +50,9 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 1. 由 Codex 使用 Supabase connector 執行 migration。
 2. 手動到 Supabase SQL Editor 執行 `supabase/schema.sql`。
 
-第一次執行需要管理權限的操作時，系統會要求輸入成員管理 PIN。若尚未初始化，系統會建立；若已初始化，則會驗證該 PIN。
+第一次進入後台時，系統會要求輸入管理密碼。若尚未初始化，系統會建立；若已初始化，則會驗證該密碼。
 
-成員管理 PIN 以 hash 存在資料庫，不會以明碼保存。前端只會把已驗證的 PIN 暫存在同一分頁的 `sessionStorage`，重整頁面後可沿用，關閉分頁後會清除。成員管理 PIN 可在「成員」頁右上角的「修改 PIN」更新。
+管理密碼以 hash 存在資料庫，不會以明碼保存。前端只會把已驗證的管理密碼暫存在同一分頁的 `sessionStorage`，重整頁面後可沿用，關閉分頁後會清除。管理密碼可在「成員」頁右上角的「修改密碼」更新，也可用頁面右上角的「登出」清除暫存登入狀態。
 
 ## 設定方式
 
@@ -90,7 +90,7 @@ php scripts/write-config.php
 
 ## 現場流程
 
-1. 到「成員」進行成員或職業操作時，輸入成員管理 PIN。
+1. 進入後台時輸入管理密碼，登入後才會載入活動、會員與紀錄資料。
 2. 在成員表單按「管理職業」，新增或修改職業。
 3. 新增/更新會員，或將已退會的人標記為退會。
 4. 到「活動/獎項」用活動名稱建立抽獎活動。
