@@ -197,6 +197,10 @@
                     <span class="status-badge" id="pending-count">0 筆</span>
                   </div>
                   <div class="pending-list" id="pending-list"></div>
+                  <button class="btn secondary pending-more" type="button" id="pending-show-more" hidden>
+                    <i data-lucide="chevrons-down"></i>
+                    <span id="pending-show-more-label">顯示更多</span>
+                  </button>
                 </div>
 
                 <div class="button-row console-actions">
@@ -436,20 +440,32 @@
             </section>
 
             <section class="stats-grid">
-              <div>
-                <dt>獎項數</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>獎項數</span>
+                  <button class="chip-button" type="button" data-history-roster="history_prizes">查看名單</button>
+                </dt>
                 <dd id="history-stat-prizes">0</dd>
               </div>
-              <div>
-                <dt>中獎紀錄</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>中獎紀錄</span>
+                  <button class="chip-button" type="button" data-history-roster="history_awards">查看名單</button>
+                </dt>
                 <dd id="history-stat-awards">0</dd>
               </div>
-              <div>
-                <dt>抽獎紀錄</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>抽獎紀錄</span>
+                  <button class="chip-button" type="button" data-history-roster="history_draws">查看名單</button>
+                </dt>
                 <dd id="history-stat-draws">0</dd>
               </div>
-              <div>
-                <dt>已排除</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>已排除</span>
+                  <button class="chip-button" type="button" data-history-roster="history_excluded_members">查看名單</button>
+                </dt>
                 <dd id="history-stat-excluded">0</dd>
               </div>
             </section>

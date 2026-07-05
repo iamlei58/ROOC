@@ -1718,6 +1718,12 @@ tr:last-child td {
   gap: 12px;
 }
 
+.pending-more {
+  width: 100%;
+  justify-content: center;
+  margin-top: 12px;
+}
+
 .pending-item {
   display: grid;
   gap: 12px;

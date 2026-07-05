@@ -16,6 +16,8 @@ const DRAW_ANIMATION_MODES = [
   "curtain"
 ];
 
+const PENDING_DRAW_PAGE_SIZE = 20;
+
 const state = {
   client: null,
   event: null,
@@ -32,6 +34,7 @@ const state = {
   providerMembers: [],
   transferCandidates: [],
   transferCandidatesLoading: false,
+  pendingVisibleCount: PENDING_DRAW_PAGE_SIZE,
   memberImportRawRows: [],
   memberImportRows: [],
   memberImportExisting: new Map(),
@@ -152,8 +155,11 @@ function bindForms() {
   $("#pending-card").addEventListener("click", handleClearPendingTransfer);
   $("#pending-card").addEventListener("submit", handlePendingTransfer);
   $("#pending-card").addEventListener("change", handlePendingTransferSelection);
+  $("#pending-show-more").addEventListener("click", showMorePendingDraws);
   $("#refresh-event").addEventListener("click", () => reloadEvent());
-  $(".stats-grid").addEventListener("click", handleRosterButtonClick);
+  $all(".stats-grid").forEach((grid) => {
+    grid.addEventListener("click", handleRosterButtonClick);
+  });
   $("#close-event").addEventListener("click", () => setEventStatus("closed"));
   $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
   $("#delete-event").addEventListener("click", () => deleteLoadedEvent("console"));
@@ -678,17 +684,29 @@ function memberOptionLabel(member) {
 
 function updateDrawCountLimit() {
   const countInput = $("#draw-count");
-  const { limit } = getSelectedDrawLimit();
+  const { prize, limit } = getSelectedDrawLimit();
 
   countInput.max = String(Math.max(limit, 1));
   countInput.disabled = limit === 0;
-  $("#draw-prize").disabled = state.event?.status !== "live" || limit === 0;
+  $("#draw-prize").disabled = state.event?.status !== "live" || !prize;
 
   const current = Number(countInput.value || 1);
   if (!Number.isFinite(current) || current < 1 || current > limit) {
     countInput.value = String(limit > 0 ? Math.min(Math.max(Math.trunc(current || 1), 1), limit) : 0);
   }
   renderDrawOdds();
+}
+
+function drawUnavailableMessage(prizeRemaining, eligibleRemaining) {
+  if (prizeRemaining <= 0) {
+    return "這個獎項目前沒有剩餘名額，請先調整名額或處理待處理抽獎。";
+  }
+
+  if (eligibleRemaining <= 0) {
+    return "目前沒有可抽成員，可能都已被排除或只剩獎項提供者。";
+  }
+
+  return "這個獎項目前沒有可抽名額，請先調整名額或處理待處理抽獎。";
 }
 
 function clampDrawCountInput() {
@@ -698,6 +716,11 @@ function clampDrawCountInput() {
   const value = Number(countInput.value);
   const { limit } = getSelectedDrawLimit();
   if (!Number.isFinite(value)) return;
+
+  if (limit === 0) {
+    countInput.value = "0";
+    return;
+  }
 
   if (value < 1) {
     countInput.value = "1";
@@ -932,7 +955,7 @@ async function loadEvent(slug) {
   }
 
   state.event = normalizeEvent(rows[0]);
-  await hydrateEventRosters(cleanSlug);
+  state.pendingVisibleCount = PENDING_DRAW_PAGE_SIZE;
   state.transferCandidates = [];
   state.transferCandidatesLoading = state.event.pending_draws.length > 0;
   syncLoadedEventSelection();
@@ -1032,6 +1055,7 @@ function renderHistoryEvent() {
   $("#history-stat-awards").textContent = event.awards.length;
   $("#history-stat-draws").textContent = event.recent_draws.length;
   $("#history-stat-excluded").textContent = event.excluded_count ?? 0;
+  syncHistoryRosterButtons();
 
   renderPrizeRows("#history-prize-table", event.prizes, "這場活動沒有獎項紀錄。");
   renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。");
@@ -1053,7 +1077,7 @@ function clearHistoryDetail() {
 }
 
 function normalizeEvent(event) {
-  const pendingDraws = asArray(event.pending_draw);
+  const pendingDraws = sortDrawRows(event.pending_draw);
   return {
     ...event,
     prizes: asArray(event.prizes),
@@ -1095,20 +1119,24 @@ function renderPrizeOptions() {
   const previousValue = select.value;
   select.innerHTML = "";
 
-  const openPrizes = state.event.prizes.filter((prize) => Number(prize.remaining_count || 0) > 0);
-  if (openPrizes.length === 0) {
-    select.append(new Option("沒有可抽獎項", ""));
+  const prizes = state.event.prizes || [];
+  if (prizes.length === 0) {
+    select.append(new Option("尚未新增獎項", ""));
     select.disabled = true;
     $("#draw-prize").disabled = true;
     updateDrawCountLimit();
     return;
   }
 
-  openPrizes.forEach((prize) => {
-    const label = `${prize.name} / ${prize.provider} / 剩 ${prize.remaining_count}`;
+  prizes.forEach((prize) => {
+    const drawLimit = Math.min(
+      Math.max(Number(prize.remaining_count || 0), 0),
+      Math.max(Number(prize.eligible_count ?? state.event?.eligible_count ?? 0), 0)
+    );
+    const label = `${prize.name} / ${prize.provider} / 可抽 ${drawLimit}`;
     select.append(new Option(label, prize.id));
   });
-  if (previousValue && openPrizes.some((prize) => prize.id === previousValue)) {
+  if (previousValue && prizes.some((prize) => prize.id === previousValue)) {
     select.value = previousValue;
   }
   select.disabled = false;
@@ -1116,38 +1144,66 @@ function renderPrizeOptions() {
   updateDrawCountLimit();
 }
 
-async function hydrateEventRosters(slug) {
+function syncRosterButtons() {
+  $all("[data-roster]").forEach((button) => {
+    button.disabled = getRosterCount(button.dataset.roster, "console") === 0;
+  });
+}
+
+function syncHistoryRosterButtons() {
+  $all("[data-history-roster]").forEach((button) => {
+    button.disabled = getRosterCount(button.dataset.historyRoster, "history") === 0;
+  });
+}
+
+async function handleRosterButtonClick(event) {
+  const button = event.target.closest("[data-roster], [data-history-roster]");
+  if (!button) return;
+  const isHistoryRoster = Boolean(button.dataset.historyRoster);
+  const source = isHistoryRoster ? "history" : "console";
+  const rosterKey = button.dataset.roster || button.dataset.historyRoster;
+
+  button.disabled = true;
+  try {
+    await ensureRosterLoaded(rosterKey, source);
+    openRosterDialog(rosterKey, source);
+  } catch (error) {
+    showToast(friendlyError(error.message || "名單載入失敗。"), "error");
+  } finally {
+    if (source === "history") {
+      syncHistoryRosterButtons();
+    } else {
+      syncRosterButtons();
+    }
+  }
+}
+
+async function ensureRosterLoaded(rosterKey, source = "console") {
+  const targetEvent = source === "history" ? state.historyEvent : state.event;
+  if (!targetEvent) throw new Error("請先載入活動。");
+
+  if (source === "history" && rosterKey !== "history_excluded_members") return;
+  const targetKey = source === "history" ? "excluded_members" : rosterKey;
+  if (Array.isArray(targetEvent[targetKey])) return;
+
   const rows = await rpc("get_raffle_event_rosters", {
-    p_slug: slug,
+    p_slug: targetEvent.slug,
     p_admin_pin: state.appAdminPin
   });
   const rosters = rows?.[0] || {};
-  state.event.active_members = asArray(rosters.active_members);
-  state.event.eligible_members = asArray(rosters.eligible_members);
-  state.event.excluded_members = asArray(rosters.excluded_members);
-  state.event.awarded_members = asArray(rosters.awarded_members);
+  targetEvent.active_members = asArray(rosters.active_members);
+  targetEvent.eligible_members = asArray(rosters.eligible_members);
+  targetEvent.excluded_members = asArray(rosters.excluded_members);
+  targetEvent.awarded_members = asArray(rosters.awarded_members);
 }
 
-function syncRosterButtons() {
-  $all("[data-roster]").forEach((button) => {
-    const list = getRosterList(button.dataset.roster);
-    button.disabled = list.length === 0;
-  });
-}
-
-function handleRosterButtonClick(event) {
-  const button = event.target.closest("[data-roster]");
-  if (!button) return;
-  openRosterDialog(button.dataset.roster);
-}
-
-function openRosterDialog(rosterKey) {
+function openRosterDialog(rosterKey, source = "console") {
   const config = rosterDialogConfig(rosterKey);
-  const list = getRosterList(rosterKey);
+  const list = getRosterList(rosterKey, source);
   $("#roster-dialog-title").textContent = config.title;
   $("#roster-dialog-count").textContent = `${list.length} 筆`;
-  $("#roster-dialog-subtitle").textContent = state.event?.title || "目前活動";
-  $("#roster-dialog-list").innerHTML = renderRosterDialogItems(list, config.empty);
+  $("#roster-dialog-subtitle").textContent = (source === "history" ? state.historyEvent?.title : state.event?.title) || "目前活動";
+  $("#roster-dialog-list").innerHTML = renderRosterDialogItems(list, config.empty, rosterKey);
   showModalDialog($("#roster-dialog"));
   refreshIcons();
 }
@@ -1156,9 +1212,36 @@ function closeRosterDialog() {
   closeModalDialog($("#roster-dialog"));
 }
 
-function getRosterList(rosterKey) {
-  if (!state.event) return [];
-  return asArray(state.event[rosterKey]);
+function getRosterList(rosterKey, source = "console") {
+  const targetEvent = source === "history" ? state.historyEvent : state.event;
+  if (!targetEvent) return [];
+
+  const historyLists = {
+    history_prizes: targetEvent.prizes,
+    history_awards: targetEvent.awards,
+    history_draws: targetEvent.recent_draws,
+    history_excluded_members: targetEvent.excluded_members
+  };
+
+  return asArray(historyLists[rosterKey] ?? targetEvent[rosterKey]);
+}
+
+function getRosterCount(rosterKey, source = "console") {
+  const targetEvent = source === "history" ? state.historyEvent : state.event;
+  if (!targetEvent) return 0;
+
+  const counts = {
+    active_members: Number(targetEvent.total_active_members || 0),
+    eligible_members: Number(targetEvent.eligible_count || 0),
+    excluded_members: Number(targetEvent.excluded_count || 0),
+    awarded_members: Number(targetEvent.award_count || 0),
+    history_prizes: asArray(targetEvent.prizes).length,
+    history_awards: asArray(targetEvent.awards).length,
+    history_draws: asArray(targetEvent.recent_draws).length,
+    history_excluded_members: Number(targetEvent.excluded_count || 0)
+  };
+
+  return counts[rosterKey] ?? getRosterList(rosterKey, source).length;
 }
 
 function rosterDialogConfig(rosterKey) {
@@ -1178,14 +1261,63 @@ function rosterDialogConfig(rosterKey) {
     awarded_members: {
       title: "已發獎名單",
       empty: "目前沒有已發獎成員。"
+    },
+    history_prizes: {
+      title: "歷史獎項名單",
+      empty: "這場活動沒有獎項紀錄。"
+    },
+    history_awards: {
+      title: "歷史中獎名單",
+      empty: "這場活動沒有中獎紀錄。"
+    },
+    history_draws: {
+      title: "歷史抽獎紀錄",
+      empty: "這場活動沒有抽獎紀錄。"
+    },
+    history_excluded_members: {
+      title: "歷史已排除名單",
+      empty: "這場活動沒有已排除成員。"
     }
   };
   return configs[rosterKey] || { title: "查看名單", empty: "目前沒有名單資料。" };
 }
 
-function renderRosterDialogItems(list, emptyMessage) {
+function renderRosterDialogItems(list, emptyMessage, rosterKey = "") {
   if (list.length === 0) {
     return `<div class="empty-state compact-empty"><p>${escapeHtml(emptyMessage)}</p></div>`;
+  }
+
+  if (rosterKey === "history_prizes") {
+    return list.map((prize) => `
+      <article class="roster-member">
+        <div>
+          <strong>${escapeHtml(prize.name)}</strong>
+          <p>${escapeHtml(historyPrizeMeta(prize))}</p>
+        </div>
+      </article>
+    `).join("");
+  }
+
+  if (rosterKey === "history_awards") {
+    return list.map((award) => `
+      <article class="roster-member">
+        <div>
+          <strong>${memberText(award.final_member_no, award.final_role_name)}</strong>
+          <p>${escapeHtml(historyAwardMeta(award))}</p>
+        </div>
+      </article>
+    `).join("");
+  }
+
+  if (rosterKey === "history_draws") {
+    return list.map((draw) => `
+      <article class="roster-member">
+        <div>
+          <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
+          <p>${escapeHtml(historyDrawMeta(draw))}</p>
+        </div>
+      </article>
+    `).join("");
   }
 
   return list.map((member) => `
@@ -1196,6 +1328,35 @@ function renderRosterDialogItems(list, emptyMessage) {
       </div>
     </article>
   `).join("");
+}
+
+function historyPrizeMeta(prize) {
+  return [
+    prize.provider ? `提供者：${prize.provider}` : "",
+    `名額：${Number(prize.quantity || 0)}`,
+    `已發獎：${Number(prize.filled_count || 0)}`,
+    `剩餘：${Number(prize.remaining_count || 0)}`
+  ].filter(Boolean).join(" / ");
+}
+
+function historyAwardMeta(award) {
+  return [
+    award.prize_name ? `獎項：${award.prize_name}` : "",
+    award.provider ? `提供者：${award.provider}` : "",
+    award.drawn_member_no ? `原抽中：${memberPlainText(award.drawn_member_no, award.drawn_role_name)}` : "",
+    award.status ? `狀態：${drawStatusText[award.status] || award.status}` : "",
+    award.resolved_at ? `時間：${formatDate(award.resolved_at)}` : ""
+  ].filter(Boolean).join(" / ");
+}
+
+function historyDrawMeta(draw) {
+  return [
+    draw.prize_name ? `獎項：${draw.prize_name}` : "",
+    draw.provider ? `提供者：${draw.provider}` : "",
+    draw.status ? `結果：${drawLogResultText(draw)}` : "",
+    draw.step_probability != null ? `機率：${formatPercent(draw.step_probability)}` : "",
+    draw.created_at ? `時間：${formatDate(draw.created_at)}` : ""
+  ].filter(Boolean).join(" / ");
 }
 
 function statMemberMeta(member) {
@@ -1219,16 +1380,24 @@ function statReasonText(reason) {
 }
 
 function renderPendingDraw() {
-  const pendingDraws = state.event.pending_draws || [];
+  const pendingDraws = sortDrawRows(state.event.pending_draws || []);
   const card = $("#pending-card");
   const list = $("#pending-list");
+  const moreButton = $("#pending-show-more");
+  const moreLabel = $("#pending-show-more-label");
+  const visibleCount = Math.min(state.pendingVisibleCount, pendingDraws.length);
+  const visibleDraws = pendingDraws.slice(0, visibleCount);
+  const hiddenCount = Math.max(pendingDraws.length - visibleCount, 0);
+
   card.hidden = pendingDraws.length === 0;
   list.innerHTML = "";
-  $("#pending-count").textContent = `${pendingDraws.length} 筆`;
+  $("#pending-count").textContent = hiddenCount > 0 ? `${pendingDraws.length} 筆，顯示 ${visibleCount}` : `${pendingDraws.length} 筆`;
+  moreButton.hidden = hiddenCount === 0;
+  moreLabel.textContent = hiddenCount > 0 ? `顯示更多（剩 ${hiddenCount} 筆）` : "顯示更多";
 
   if (pendingDraws.length === 0) return;
 
-  pendingDraws.forEach((pending) => {
+  visibleDraws.forEach((pending) => {
     const item = document.createElement("section");
     item.className = "pending-item";
     item.dataset.drawId = pending.id;
@@ -1272,6 +1441,11 @@ function renderPendingDraw() {
   });
   populateTransferMemberSelect();
   refreshIcons();
+}
+
+function showMorePendingDraws() {
+  state.pendingVisibleCount += PENDING_DRAW_PAGE_SIZE;
+  renderPendingDraw();
 }
 
 function renderPrizeTable() {
@@ -1510,12 +1684,12 @@ async function handleDrawPrize() {
     const drawCount = Number($("#draw-count").value || 1);
     const { prize, limit, prizeRemaining, eligibleRemaining } = getSelectedDrawLimit();
 
-    if (!Number.isInteger(drawCount) || drawCount < 1) {
-      throw new Error("抽出人數必須是 1 以上的整數。");
+    if (limit <= 0) {
+      throw new Error(drawUnavailableMessage(prizeRemaining, eligibleRemaining));
     }
 
-    if (limit <= 0) {
-      throw new Error("目前沒有剩餘可抽名額或可抽成員。");
+    if (!Number.isInteger(drawCount) || drawCount < 1) {
+      throw new Error("抽出人數必須是 1 以上的整數。");
     }
 
     if (drawCount > limit) {
@@ -1548,8 +1722,9 @@ async function handleDrawPrize() {
         waitForAnimation(2200)
       ]);
 
-      await revealDrawAnimationResults(drawnRows || [], animationContext);
-      await finishLiveDraw(liveDraw?.id, "completed", drawnRows || []);
+      const orderedDrawnRows = sortDrawRows(drawnRows || []);
+      await revealDrawAnimationResults(orderedDrawnRows, animationContext);
+      await finishLiveDraw(liveDraw?.id, "completed", orderedDrawnRows);
       await loadEvent(state.event.slug);
       showToast(drawCount > 1 ? `已抽出 ${drawCount} 位，請處理結果。` : "已抽出，請處理結果。", "success");
       keepResultOpen = true;
@@ -1712,6 +1887,23 @@ function drawResultLabel(row) {
   const roleName = row.role_name || row.member_no || "";
   const memberNo = row.member_no && row.member_no !== roleName ? `（${row.member_no}）` : "";
   return `${roleName}${memberNo}`;
+}
+
+function sortDrawRows(rows) {
+  return asArray(rows)
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftSlot = Number(left.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      const rightSlot = Number(right.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      if (leftSlot !== rightSlot) return leftSlot - rightSlot;
+
+      const leftTime = Date.parse(left.row?.created_at || "") || 0;
+      const rightTime = Date.parse(right.row?.created_at || "") || 0;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+
+      return left.index - right.index;
+    })
+    .map((item) => item.row);
 }
 
 function launchDrawConfetti(resultCount) {

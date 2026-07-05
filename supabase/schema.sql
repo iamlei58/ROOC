@@ -1254,7 +1254,7 @@ begin
             'random_token', pending_rows.random_token,
             'created_at', pending_rows.created_at
           )
-          order by pending_rows.created_at, pending_rows.slot_number
+          order by pending_rows.slot_number, pending_rows.created_at
         )
         from (
           select
@@ -1275,7 +1275,7 @@ begin
           join public.rooc_members m on m.id = d.drawn_member_id
           where d.event_id = v_event.id
             and d.status = 'pending'
-          order by d.created_at, d.slot_number
+          order by d.slot_number, d.created_at
         ) as pending_rows
       ),
       '[]'::jsonb
