@@ -769,6 +769,9 @@ begin
   end if;
 
   v_base := trim(both '-' from left(v_base, 72));
+  if char_length(v_base) < 3 then
+    v_base := 'raffle-' || v_base;
+  end if;
   v_slug := v_base;
 
   while exists (select 1 from public.raffle_events e where e.slug = v_slug) loop
@@ -1428,6 +1431,107 @@ begin
   return query
   select *
   from public.get_raffle_event_admin(v_slug, p_app_admin_pin);
+end;
+$$;
+
+create or replace function public.get_raffle_event_rosters(
+  p_slug text,
+  p_admin_pin text
+)
+returns table(
+  active_members jsonb,
+  eligible_members jsonb,
+  excluded_members jsonb,
+  awarded_members jsonb
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_event_id uuid;
+begin
+  v_event_id := public.validate_event_admin(p_slug, p_admin_pin);
+
+  return query
+  select
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'member_no', m.member_no,
+            'role_name', public.member_label(m),
+            'occupation', m.occupation,
+            'joined_dc', m.joined_dc
+          )
+          order by m.member_no
+        )
+        from public.rooc_members m
+        where m.is_active
+      ),
+      '[]'::jsonb
+    ) as active_members,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'member_no', m.member_no,
+            'role_name', public.member_label(m),
+            'occupation', m.occupation,
+            'joined_dc', m.joined_dc
+          )
+          order by m.member_no
+        )
+        from public.rooc_members m
+        where m.is_active
+          and not exists (
+            select 1
+            from public.raffle_exclusions x
+            where x.event_id = v_event_id
+              and x.member_id = m.id
+          )
+      ),
+      '[]'::jsonb
+    ) as eligible_members,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'member_no', m.member_no,
+            'role_name', public.member_label(m),
+            'occupation', m.occupation,
+            'joined_dc', m.joined_dc,
+            'reason', x.reason
+          )
+          order by x.created_at desc, m.member_no
+        )
+        from public.raffle_exclusions x
+        join public.rooc_members m on m.id = x.member_id
+        where x.event_id = v_event_id
+      ),
+      '[]'::jsonb
+    ) as excluded_members,
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'member_no', fm.member_no,
+            'role_name', public.member_label(fm),
+            'occupation', fm.occupation,
+            'joined_dc', fm.joined_dc,
+            'prize_name', p.name,
+            'status', d.status
+          )
+          order by d.resolved_at desc, d.created_at desc
+        )
+        from public.raffle_draws d
+        join public.raffle_prizes p on p.id = d.prize_id
+        join public.rooc_members fm on fm.id = d.final_member_id
+        where d.event_id = v_event_id
+          and d.status in ('accepted', 'transferred')
+      ),
+      '[]'::jsonb
+    ) as awarded_members;
 end;
 $$;
 
@@ -2463,6 +2567,7 @@ revoke execute on function public.set_raffle_prize_quantity(text, text, uuid, in
 revoke execute on function public.delete_raffle_prize(text, text, uuid) from public;
 revoke execute on function public.get_raffle_event_admin(text, text) from public;
 revoke execute on function public.get_raffle_event_admin_by_title(text, text) from public;
+revoke execute on function public.get_raffle_event_rosters(text, text) from public;
 revoke execute on function public.list_public_raffle_events() from public;
 revoke execute on function public.get_public_raffle_event(text) from public;
 revoke execute on function public.get_public_raffle_live_draw(text) from public;
@@ -2491,6 +2596,7 @@ grant execute on function public.set_raffle_prize_quantity(text, text, uuid, int
 grant execute on function public.delete_raffle_prize(text, text, uuid) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin(text, text) to anon, authenticated;
 grant execute on function public.get_raffle_event_admin_by_title(text, text) to anon, authenticated;
+grant execute on function public.get_raffle_event_rosters(text, text) to anon, authenticated;
 grant execute on function public.list_public_raffle_events() to anon, authenticated;
 grant execute on function public.get_public_raffle_event(text) to anon, authenticated;
 grant execute on function public.get_public_raffle_live_draw(text) to anon, authenticated;

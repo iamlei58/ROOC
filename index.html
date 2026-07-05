@@ -127,20 +127,32 @@
             </section>
 
             <section class="stats-grid">
-              <div>
-                <dt>公會中成員</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>公會中成員</span>
+                  <button class="chip-button" type="button" data-roster="active_members">查看名單</button>
+                </dt>
                 <dd id="stat-active-members">0</dd>
               </div>
-              <div>
-                <dt>可抽名單</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>可抽名單</span>
+                  <button class="chip-button" type="button" data-roster="eligible_members">查看名單</button>
+                </dt>
                 <dd id="stat-eligible">0</dd>
               </div>
-              <div>
-                <dt>已排除</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>已排除</span>
+                  <button class="chip-button" type="button" data-roster="excluded_members">查看名單</button>
+                </dt>
                 <dd id="stat-excluded">0</dd>
               </div>
-              <div>
-                <dt>已發獎</dt>
+              <div class="stat-card">
+                <dt>
+                  <span>已發獎</span>
+                  <button class="chip-button" type="button" data-roster="awarded_members">查看名單</button>
+                </dt>
                 <dd id="stat-awards">0</dd>
               </div>
             </section>
@@ -264,15 +276,15 @@
                   <p class="section-label" id="bonus-prize-mode">新增</p>
                   <h3 id="bonus-prize-title">新增獎項</h3>
                 </div>
-                <button class="btn icon-button" type="button" id="close-bonus-prize-dialog" aria-label="關閉獎項加碼">
+                <button class="btn icon-button" type="button" id="close-bonus-prize-dialog" aria-label="關閉獎項調整">
                   <i data-lucide="x"></i>
                 </button>
               </div>
 
-              <form class="form-stack" id="add-prize-form">
+              <form class="form-stack" id="add-prize-form" novalidate>
                 <input name="prize_id" id="bonus-prize-id" type="hidden">
                 <div class="selected-prize" id="bonus-selected-prize" hidden>
-                  <span>加碼獎項</span>
+                  <span>調整獎項</span>
                   <strong id="bonus-selected-prize-name"></strong>
                 </div>
                 <label data-new-prize-field>
@@ -885,11 +897,32 @@
         </div>
       </dialog>
 
+      <dialog class="modal roster-modal" id="roster-dialog">
+        <div class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="section-label">名單</p>
+              <h3 id="roster-dialog-title">查看名單</h3>
+            </div>
+            <button class="btn icon-button" type="button" id="close-roster-dialog" aria-label="關閉名單">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="roster-dialog-summary">
+            <span class="status-badge" id="roster-dialog-count">0 筆</span>
+            <span id="roster-dialog-subtitle">目前活動</span>
+          </div>
+
+          <div class="roster-dialog-list" id="roster-dialog-list"></div>
+        </div>
+      </dialog>
+
       <dialog class="modal compact-modal confirm-modal" id="confirm-dialog">
         <div class="modal-shell">
           <div class="modal-head">
             <div>
-              <p class="section-label">Confirm</p>
+              <p class="section-label">確認</p>
               <h3 id="confirm-dialog-title">確認操作</h3>
             </div>
             <button class="btn icon-button" type="button" id="confirm-dialog-close" aria-label="關閉確認視窗">

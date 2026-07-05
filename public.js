@@ -801,7 +801,17 @@ function cleanRequired(value, message) {
 }
 
 function friendlyError(message) {
-  return String(message || "操作失敗。")
+  const text = String(message || "");
+  if (text.includes("raffle_events_slug_check")) return "活動代碼格式不正確。";
+  if (text.includes("new row for relation") && text.includes("violates check constraint")) return "資料格式不符合系統規則。";
+  if (text.includes("duplicate key value violates unique constraint")) return "資料已存在，請確認是否重複。";
+  if (text.includes("violates foreign key constraint")) return "關聯資料不存在或已被刪除，請重新整理後再試。";
+  if (text.includes("invalid input syntax for type uuid")) return "資料識別碼格式不正確，請重新整理頁面後再試。";
+  if (text.includes("permission denied") || text.includes("insufficient_privilege")) return "目前沒有權限執行這個操作。";
+  if (text.includes("JWT") && text.includes("expired")) return "連線憑證已過期，請重新整理頁面。";
+  if (text.includes("Failed to fetch") || text.includes("NetworkError")) return "無法連線到 Supabase，請檢查網路或稍後再試。";
+
+  return text
     .replace(/^Error:\s*/i, "")
     .replace(/JSON object requested, multiple .* rows returned/i, "資料重複，請檢查設定。")
     .trim();

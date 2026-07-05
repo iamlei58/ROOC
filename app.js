@@ -153,6 +153,7 @@ function bindForms() {
   $("#pending-card").addEventListener("submit", handlePendingTransfer);
   $("#pending-card").addEventListener("change", handlePendingTransferSelection);
   $("#refresh-event").addEventListener("click", () => reloadEvent());
+  $(".stats-grid").addEventListener("click", handleRosterButtonClick);
   $("#close-event").addEventListener("click", () => setEventStatus("closed"));
   $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
   $("#delete-event").addEventListener("click", () => deleteLoadedEvent("console"));
@@ -169,6 +170,7 @@ function bindForms() {
   $("#dismiss-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#return-public-from-login").addEventListener("click", returnToPublicPage);
   $("#dismiss-change-admin-pin").addEventListener("click", cancelAdminPinPrompt);
+  $("#close-roster-dialog").addEventListener("click", closeRosterDialog);
   $("#confirm-dialog-accept").addEventListener("click", () => closeConfirmDialog(true));
   $("#confirm-dialog-cancel").addEventListener("click", () => closeConfirmDialog(false));
   $("#confirm-dialog-close").addEventListener("click", () => closeConfirmDialog(false));
@@ -210,6 +212,7 @@ function bindDialogBackdrops() {
     ["#member-edit-dialog", closeMemberEditDialog],
     ["#occupation-dialog", closeOccupationDialog],
     ["#admin-pin-dialog", cancelAdminPinPrompt],
+    ["#roster-dialog", closeRosterDialog],
     ["#confirm-dialog", () => closeConfirmDialog(false)]
   ]);
 
@@ -446,8 +449,12 @@ function enhanceSelect(select, options = {}) {
 function destroyEnhancedSelect(select) {
   if (!select || !window.jQuery?.fn?.select2) return;
   const selectElement = window.jQuery(select);
-  if (selectElement.data("select2")) {
-    selectElement.select2("destroy");
+  try {
+    if (selectElement.data("select2")) {
+      selectElement.select2("destroy");
+    }
+  } catch {
+    // Select2 can be left in a stale state after modal toggles; ignore and rebuild later.
   }
 }
 
@@ -780,13 +787,13 @@ function closeCreateEventDialog() {
 function openBonusPrizeDialog(prizeId = "") {
   ensureEventLoaded();
   if (state.event.status !== "live") {
-    showToast("活動已結束，不能新增或加碼獎項。", "error");
+    showToast("活動已結束，不能新增或調整獎項。", "error");
     return;
   }
 
   const prize = prizeId ? state.event.prizes.find((item) => item.id === prizeId) : null;
   if (prizeId && !prize) {
-    showToast("找不到要加碼的獎項。", "error");
+    showToast("找不到要調整的獎項。", "error");
     return;
   }
 
@@ -798,6 +805,7 @@ function openBonusPrizeDialog(prizeId = "") {
   const nameInput = $("#bonus-prize-name");
   const providerSelect = $("#prize-provider-select");
   const quantityInput = $("#bonus-prize-quantity");
+  const submitButton = form.querySelector('button[type="submit"]');
 
   form.dataset.mode = isExistingPrize ? "quantity" : "create";
   $("#bonus-prize-id").value = prize?.id || "";
@@ -817,16 +825,20 @@ function openBonusPrizeDialog(prizeId = "") {
 
   if (isExistingPrize) {
     const usedCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
-    destroyEnhancedSelect(providerSelect);
+    const currentQuantity = Number(prize.quantity || 0);
     $("#bonus-selected-prize").hidden = false;
-    $("#bonus-selected-prize-name").textContent = `${prize.name} / ${prize.provider} / 目前 ${prize.quantity} 名額，已抽或待處理 ${usedCount} 名`;
+    $("#bonus-selected-prize-name").textContent = `${prize.name} / ${prize.provider} / 目前 ${currentQuantity} 名額，已抽或待處理 ${usedCount} 名`;
     quantityInput.min = String(Math.max(usedCount, 1));
     quantityInput.max = "200";
-    quantityInput.value = String(prize.quantity || 1);
+    quantityInput.value = String(Math.max(currentQuantity, usedCount, 1));
+    quantityInput.disabled = false;
+    if (submitButton) submitButton.disabled = false;
   } else {
     $("#bonus-selected-prize").hidden = true;
     quantityInput.min = "1";
     quantityInput.max = "200";
+    quantityInput.disabled = false;
+    if (submitButton) submitButton.disabled = false;
     quantityInput.value = "1";
     populatePrizeProviderSelect();
   }
@@ -866,6 +878,9 @@ function resetBonusPrizeForm() {
   $("#bonus-quantity-label").textContent = "名額";
   $("#bonus-prize-quantity").min = "1";
   $("#bonus-prize-quantity").max = "200";
+  $("#bonus-prize-quantity").disabled = false;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = false;
 
   $all("[data-new-prize-field]").forEach((field) => {
     field.hidden = false;
@@ -917,6 +932,7 @@ async function loadEvent(slug) {
   }
 
   state.event = normalizeEvent(rows[0]);
+  await hydrateEventRosters(cleanSlug);
   state.transferCandidates = [];
   state.transferCandidatesLoading = state.event.pending_draws.length > 0;
   syncLoadedEventSelection();
@@ -1059,6 +1075,7 @@ function renderEvent() {
   $("#stat-eligible").textContent = event.eligible_count ?? 0;
   $("#stat-excluded").textContent = event.excluded_count ?? 0;
   $("#stat-awards").textContent = event.award_count ?? 0;
+  syncRosterButtons();
 
   $("#close-event").disabled = event.status === "closed";
   $("#reopen-event").disabled = event.status === "live";
@@ -1097,6 +1114,108 @@ function renderPrizeOptions() {
   select.disabled = false;
   $("#draw-prize").disabled = state.event.status !== "live";
   updateDrawCountLimit();
+}
+
+async function hydrateEventRosters(slug) {
+  const rows = await rpc("get_raffle_event_rosters", {
+    p_slug: slug,
+    p_admin_pin: state.appAdminPin
+  });
+  const rosters = rows?.[0] || {};
+  state.event.active_members = asArray(rosters.active_members);
+  state.event.eligible_members = asArray(rosters.eligible_members);
+  state.event.excluded_members = asArray(rosters.excluded_members);
+  state.event.awarded_members = asArray(rosters.awarded_members);
+}
+
+function syncRosterButtons() {
+  $all("[data-roster]").forEach((button) => {
+    const list = getRosterList(button.dataset.roster);
+    button.disabled = list.length === 0;
+  });
+}
+
+function handleRosterButtonClick(event) {
+  const button = event.target.closest("[data-roster]");
+  if (!button) return;
+  openRosterDialog(button.dataset.roster);
+}
+
+function openRosterDialog(rosterKey) {
+  const config = rosterDialogConfig(rosterKey);
+  const list = getRosterList(rosterKey);
+  $("#roster-dialog-title").textContent = config.title;
+  $("#roster-dialog-count").textContent = `${list.length} 筆`;
+  $("#roster-dialog-subtitle").textContent = state.event?.title || "目前活動";
+  $("#roster-dialog-list").innerHTML = renderRosterDialogItems(list, config.empty);
+  showModalDialog($("#roster-dialog"));
+  refreshIcons();
+}
+
+function closeRosterDialog() {
+  closeModalDialog($("#roster-dialog"));
+}
+
+function getRosterList(rosterKey) {
+  if (!state.event) return [];
+  return asArray(state.event[rosterKey]);
+}
+
+function rosterDialogConfig(rosterKey) {
+  const configs = {
+    active_members: {
+      title: "公會中成員名單",
+      empty: "目前沒有公會中成員。"
+    },
+    eligible_members: {
+      title: "剩餘可抽名單",
+      empty: "目前沒有可抽成員。"
+    },
+    excluded_members: {
+      title: "已排除名單",
+      empty: "目前沒有已排除成員。"
+    },
+    awarded_members: {
+      title: "已發獎名單",
+      empty: "目前沒有已發獎成員。"
+    }
+  };
+  return configs[rosterKey] || { title: "查看名單", empty: "目前沒有名單資料。" };
+}
+
+function renderRosterDialogItems(list, emptyMessage) {
+  if (list.length === 0) {
+    return `<div class="empty-state compact-empty"><p>${escapeHtml(emptyMessage)}</p></div>`;
+  }
+
+  return list.map((member) => `
+    <article class="roster-member">
+      <div>
+        <strong>${memberText(member.member_no, member.role_name)}</strong>
+        <p>${escapeHtml(statMemberMeta(member) || "沒有額外資訊")}</p>
+      </div>
+    </article>
+  `).join("");
+}
+
+function statMemberMeta(member) {
+  return [
+    member.occupation ? `職業：${member.occupation}` : "",
+    member.joined_dc === true ? "DC：已加入" : member.joined_dc === false ? "DC：未加入" : "",
+    member.reason ? `原因：${drawStatusText[member.reason] || statReasonText(member.reason)}` : "",
+    member.prize_name ? `獎項：${member.prize_name}` : ""
+  ].filter(Boolean).join(" / ");
+}
+
+function statReasonText(reason) {
+  const labels = {
+    pending: "待處理",
+    accepted: "確認得獎",
+    declined: "放棄重抽",
+    transferred_from: "原抽中後轉讓",
+    transferred_to: "指定轉讓"
+  };
+  return labels[reason] || reason;
 }
 
 function renderPendingDraw() {
@@ -1203,7 +1322,11 @@ function handlePrizeTableAction(event) {
   if (!button) return;
 
   if (button.dataset.prizeAction === "bonus") {
-    openBonusPrizeDialog(button.dataset.prizeId || "");
+    try {
+      openBonusPrizeDialog(button.dataset.prizeId || "");
+    } catch (error) {
+      showToast(friendlyError(error.message || "無法開啟獎項調整視窗。"), "error");
+    }
   }
 
   if (button.dataset.prizeAction === "delete") {
@@ -1325,14 +1448,27 @@ async function handleAddPrize(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
+  const quantityInput = $("#bonus-prize-quantity");
 
   await withBusy(form, async () => {
     ensureEventLoaded();
     await ensureAppAdminPin();
     const prizeId = String(data.get("prize_id") || "").trim();
-    const quantity = Number(data.get("quantity") || 1);
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) {
-      throw new Error("名額必須是 1 到 200 的整數。");
+    const quantity = parseBoundedInteger(data.get("quantity"), {
+      min: Number(quantityInput.min || 1),
+      max: Number(quantityInput.max || 200),
+      label: prizeId ? "總名額" : "名額"
+    });
+
+    if (prizeId) {
+      const prize = state.event.prizes.find((item) => item.id === prizeId);
+      if (!prize) {
+        throw new Error("找不到要調整的獎項。");
+      }
+      const usedCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
+      if (quantity < usedCount) {
+        throw new Error(`總名額不能低於已抽出或待處理數量，目前至少需要 ${usedCount} 名。`);
+      }
     }
 
     if (prizeId) {
@@ -1344,15 +1480,16 @@ async function handleAddPrize(event) {
       });
       closeBonusPrizeDialog();
       await loadEvent(state.event.slug);
-      showToast("獎項名額已調整。", "success");
+      showToast(`獎項名額已調整為 ${quantity} 名。`, "success");
       return;
     }
 
+    const prizeName = cleanRequired(data.get("name"), "請輸入獎項名稱。");
     const provider = cleanRequired(data.get("provider"), "請選擇獎項提供者。");
     await rpc("add_raffle_prize", {
       p_slug: state.event.slug,
       p_admin_pin: state.appAdminPin,
-      p_name: data.get("name"),
+      p_name: prizeName,
       p_provider: provider,
       p_quantity: quantity
     });
@@ -1797,14 +1934,17 @@ async function setEventStatus(status) {
     ensureEventLoaded();
     label = status === "closed" ? "結束活動" : "重新開放活動";
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(friendlyError(error.message), "error");
     return;
   }
 
   if (status === "closed") {
-    const confirmed = await confirmToast("確定要結束這場活動？", {
-      confirmText: "結束活動",
-      cancelText: "取消"
+    const confirmed = await requestConfirmDialog({
+      title: "結束活動",
+      message: "確定要結束這場活動？結束後可在歷史紀錄查看，也可以重新開放。",
+      confirmLabel: "結束活動",
+      confirmIcon: "circle-stop",
+      confirmKind: "primary"
     });
     if (!confirmed) return;
   }
@@ -1830,10 +1970,12 @@ async function deleteLoadedEvent(source) {
     return;
   }
 
-  const confirmed = await confirmToast(`確定刪除「${targetEvent.title}」？獎項、中獎名單與抽獎紀錄都會一併刪除。`, {
-    confirmText: "刪除活動",
-    cancelText: "取消",
-    type: "error"
+  const confirmed = await requestConfirmDialog({
+    title: "刪除活動",
+    message: `確定刪除「${targetEvent.title}」？獎項、中獎名單與抽獎紀錄都會一併刪除。`,
+    confirmLabel: "刪除活動",
+    confirmIcon: "trash-2",
+    confirmKind: "danger"
   });
   if (!confirmed) return;
 
@@ -2813,7 +2955,7 @@ function exportAwardsCsv() {
   try {
     ensureEventLoaded();
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(friendlyError(error.message), "error");
     return;
   }
 
@@ -2919,12 +3061,40 @@ function rememberInvalidPins(error) {
 
 function friendlyError(message) {
   const text = String(message || "");
+  const normalized = text
+    .replace(/^Error:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
   if (text.includes("App admin PIN is invalid") || text.includes("成員管理 PIN 不正確") || text.includes("管理密碼不正確")) return "管理密碼不正確。";
   if (text.includes("App admin PIN is not initialized") || text.includes("尚未設定成員管理 PIN") || text.includes("尚未設定管理密碼")) return "尚未設定管理密碼。";
   if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元") || text.includes("管理密碼至少需要 4 個字元")) return "管理密碼至少需要 4 個字元。";
   if (text.includes("Raffle event not found") || text.includes("找不到活動")) return "找不到活動。";
   if (text.includes("Raffle event title already exists") || text.includes("活動名稱已存在")) return "活動名稱已存在。";
-  if (text.includes("名額不能低於已抽出或待處理數量")) return "名額不能低於已抽出或待處理數量。";
+  if (text.includes("raffle_events_slug_check")) return "活動代碼格式不正確。請使用至少 3 個小寫英文字母、數字或連字號。";
+  if (text.includes("new row for relation") && text.includes("violates check constraint")) return "資料格式不符合系統規則，請檢查輸入內容。";
+  if (text.includes("duplicate key value violates unique constraint") && text.includes("raffle_events_title")) return "活動名稱已存在。";
+  if (text.includes("duplicate key value violates unique constraint") && text.includes("raffle_events_slug")) return "活動代碼已存在，請換一個活動名稱。";
+  if (text.includes("duplicate key value violates unique constraint") && text.includes("rooc_members")) return "成員編號已存在。";
+  if (text.includes("duplicate key value violates unique constraint") && text.includes("rooc_occupations")) return "職業名稱已存在。";
+  if (text.includes("duplicate key value violates unique constraint")) return "資料已存在，請確認是否重複新增。";
+  if (text.includes("violates foreign key constraint")) return "關聯資料不存在或已被刪除，請重新整理後再試。";
+  if (text.includes("invalid input syntax for type uuid")) return "資料識別碼格式不正確，請重新整理頁面後再試。";
+  if (text.includes("permission denied") || text.includes("insufficient_privilege")) return "目前沒有權限執行這個操作。";
+  if (text.includes("Could not find the function") || text.includes("PGRST202")) return "資料庫功能尚未更新，請稍後重新整理頁面。";
+  if (text.includes("JWT") && text.includes("expired")) return "連線憑證已過期，請重新整理頁面。";
+  if (text.includes("Failed to fetch") || text.includes("NetworkError")) return "無法連線到 Supabase，請檢查網路或稍後再試。";
+  if (text.includes("JSON object requested, multiple")) return "資料重複，請檢查設定。";
+  if (text.includes("Cannot read properties") || text.includes("is not a function")) return "介面狀態不同步，請重新整理頁面後再試。";
+  if (text.includes("An invalid form control") || text.includes("not focusable")) return "表單欄位狀態異常，請重新開啟視窗後再試。";
+  if (text.includes("The specified value") && text.includes("cannot be parsed")) return "請輸入有效的數字。";
+  if (text.includes("總名額不能低於已抽出或待處理數量")) return text;
+  if (text.includes("名額不能低於已抽出或待處理數量")) return "總名額不能低於已抽出或待處理數量。";
+  if (text.includes("活動已關閉，不能加碼獎項")) return "活動已結束，不能調整獎項。";
+  if (text.includes("找不到要加碼的獎項")) return "找不到要調整的獎項。";
+  if (text.includes("加碼名額必須介於") || text.includes("新增名額必須介於")) return "新增名額必須是有效範圍內的數字。";
+  if (text.includes("獎項名額加碼後不能超過 200")) return "獎項名額調整後不能超過 200。";
+  if (text.includes("獎項名額調整後不能超過 200")) return text;
   if (text.includes("找不到要調整的獎項")) return "找不到要調整的獎項。";
   if (text.includes("獎項名額必須介於 1 到 200")) return "獎項名額必須介於 1 到 200。";
   if (text.includes("此獎項已有抽獎紀錄，不能刪除")) return "此獎項已有抽獎紀錄，不能刪除。";
@@ -2934,7 +3104,7 @@ function friendlyError(message) {
   if (text.includes("Role name is required") || text.includes("請輸入角色名稱")) return "請輸入角色名稱。";
   if (text.includes("此職業目前未啟用")) return "此職業目前未啟用。";
   if (text.includes("請輸入職業名稱")) return "請輸入職業名稱。";
-  return text || "操作失敗。";
+  return normalized || "操作失敗。";
 }
 
 function setBusy(target, busy) {
@@ -2957,7 +3127,12 @@ function requestConfirmDialog(options = {}) {
 
   $("#confirm-dialog-title").textContent = options.title || "確認操作";
   $("#confirm-dialog-message").textContent = options.message || "確定要繼續嗎？";
+  const acceptButton = $("#confirm-dialog-accept");
+  const acceptIcon = acceptButton.querySelector("i");
   $("#confirm-dialog-accept-label").textContent = options.confirmLabel || "確認";
+  acceptButton.classList.remove("primary", "accent", "danger", "secondary");
+  acceptButton.classList.add(options.confirmKind || "danger");
+  acceptIcon?.setAttribute("data-lucide", options.confirmIcon || "check");
   showModalDialog($("#confirm-dialog"));
   refreshIcons();
   window.setTimeout(() => $("#confirm-dialog-cancel").focus(), 0);
@@ -3150,6 +3325,24 @@ function cleanRequired(value, message) {
   const clean = String(value || "").trim();
   if (!clean) throw new Error(message);
   return clean;
+}
+
+function parseBoundedInteger(value, options = {}) {
+  const label = options.label || "數值";
+  const text = String(value ?? "").trim();
+  const number = Number(text);
+  const min = Number.isFinite(options.min) ? options.min : 1;
+  const max = Number.isFinite(options.max) ? options.max : 200;
+
+  if (!text || !Number.isInteger(number)) {
+    throw new Error(`${label}必須是整數。`);
+  }
+
+  if (number < min || number > max) {
+    throw new Error(`${label}必須介於 ${min} 到 ${max}。`);
+  }
+
+  return number;
 }
 
 function asArray(value) {

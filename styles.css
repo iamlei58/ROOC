@@ -561,7 +561,16 @@ input[readonly] {
   padding: 15px;
 }
 
+.stat-card {
+  min-width: 0;
+}
+
 .stats-grid dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
@@ -571,6 +580,74 @@ input[readonly] {
   margin: 6px 0 0;
   font-size: 1.55rem;
   font-weight: 900;
+}
+
+.chip-button {
+  min-height: 25px;
+  padding: 4px 8px;
+  border: 1px solid rgba(8, 127, 140, 0.26);
+  border-radius: 999px;
+  color: var(--primary);
+  background: rgba(8, 127, 140, 0.08);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.chip-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: rgba(8, 127, 140, 0.14);
+}
+
+.chip-button:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  background: #f3f6f8;
+}
+
+.roster-modal {
+  width: min(680px, calc(100% - 28px));
+}
+
+.roster-dialog-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.roster-dialog-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(520px, calc(100vh - 230px));
+  overflow: auto;
+}
+
+.roster-member {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.roster-member strong {
+  display: block;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.roster-member p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.compact-empty {
+  min-height: 140px;
 }
 
 .board-grid,
