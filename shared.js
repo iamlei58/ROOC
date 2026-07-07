@@ -198,35 +198,16 @@ window.ROOC_CONFIG = (() => {
   }
 
   function mountEnvironmentSwitcher(environmentState, options = {}) {
-    const root = document.querySelector(options.rootSelector || "#environment-switcher");
-    const select = document.querySelector(options.selectSelector || "#environment-select");
-    if (!root || !select) {
+    window.ROOC_ENVIRONMENT_SWITCHER_STATE = { environmentState, options };
+
+    if (window.ROOC_VUE_ENVIRONMENT_SWITCHER?.mount?.(environmentState, options)) {
       syncEnvironmentLinks(environmentState);
       return;
     }
 
-    const shouldShow = environmentState.environments.length > 1
-      && (environmentState.isLocalSurface || environmentState.hasExplicitEnvironment || !environmentState.isDefault);
-
-    root.hidden = !shouldShow;
-    root.classList.toggle("is-test-environment", !environmentState.isDefault);
-    select.innerHTML = "";
-
-    environmentState.environments.forEach((environment) => {
-      select.append(new Option(environment.label, environment.id));
-    });
-    select.value = environmentState.current.id;
-
-    const activeLabel = root.querySelector("[data-environment-active-label]");
-    if (activeLabel) {
-      activeLabel.textContent = environmentState.current.label;
-    }
-
-    if (!select.dataset.environmentSwitcherBound) {
-      select.dataset.environmentSwitcherBound = "true";
-      select.addEventListener("change", () => navigateToEnvironment(select.value));
-    }
-
+    window.dispatchEvent(new CustomEvent("rooc:environment-switcher", {
+      detail: { environmentState, options }
+    }));
     syncEnvironmentLinks(environmentState);
   }
 
@@ -270,6 +251,7 @@ window.ROOC_CONFIG = (() => {
   return {
     loadOptionalLocalConfig,
     mountEnvironmentSwitcher,
+    navigateToEnvironment,
     normalizeSupabaseConfig,
     resolveSupabaseEnvironment
   };

@@ -36,43 +36,10 @@ function copyLegacyStatic() {
   };
 }
 
-function injectVueBridge() {
-  return {
-    name: "inject-vue-bridge",
-    transformIndexHtml(html, context) {
-      const isPublicPage = (context.filename || "").endsWith("public.html");
-      const page = isPublicPage ? "public" : "admin";
-
-      return {
-        html,
-        tags: [
-          {
-            tag: "script",
-            attrs: {
-              type: "module",
-              src: `/src/${page}/main.js`
-            },
-            injectTo: "head"
-          },
-          {
-            tag: "div",
-            attrs: {
-              id: `rooc-vue-${page}-root`,
-              hidden: true
-            },
-            injectTo: "body-prepend"
-          }
-        ]
-      };
-    }
-  };
-}
-
 export default defineConfig({
   base: "./",
   plugins: [
     vue(),
-    injectVueBridge(),
     copyLegacyStatic()
   ],
   build: {

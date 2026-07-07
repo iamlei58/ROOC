@@ -1,6 +1,23 @@
 import { createApp } from "vue";
-import LegacyBridge from "../components/LegacyBridge.vue";
+import AdminApp from "../components/admin/AdminApp.vue";
+import "../shared/admin-stats.js";
+import "../shared/admin-tables.js";
+import "../shared/admin-event-header.js";
+import "../shared/admin-tabs.js";
+import "../shared/confirm-dialog.js";
+import "../shared/connection-pill.js";
+import "../shared/draw-odds.js";
+import "../shared/draw-reveal.js";
+import "../shared/environment-switcher.js";
+import "../shared/member-import-table.js";
+import "../shared/member-import-summary.js";
+import "../shared/member-table.js";
+import "../shared/member-sort-head.js";
+import "../shared/occupation-table.js";
+import "../shared/pending-card.js";
+import "../shared/roster-shell.js";
+import "../shared/select-options.js";
+import "../shared/text-content.js";
+import "../shared/toasts.js";
 
-createApp(LegacyBridge, {
-  page: "admin"
-}).mount("#rooc-vue-admin-root");
+createApp(AdminApp).mount("#rooc-vue-admin-root");

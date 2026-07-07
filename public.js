@@ -16,11 +16,13 @@ const publicState = {
   liveAnimationMode: "",
   liveRevealMode: "roller",
   liveFireworks: null,
-  liveEffectCleanupId: null
+  liveEffectCleanupId: null,
+  tableRenderKeys: new Map()
 };
 
 const PUBLIC_REFRESH_INTERVAL = 2500;
 const PUBLIC_DRAW_EFFECT_CLEANUP_MS = 2600;
+const PUBLIC_TABLE_RENDER_LIMIT = 120;
 
 const drawStatusText = {
   pending: "待處理",
@@ -41,13 +43,18 @@ function $(selector) {
   return document.querySelector(selector);
 }
 
+function setText(selector, text) {
+  window.ROOC_VUE_TEXT_CONTENT?.render?.({
+    targetSelector: selector,
+    text: text ?? ""
+  });
+}
+
 function bindPublicPage() {
   $("#public-event-form").addEventListener("submit", handleLoadPublicEvent);
   $("#refresh-public-events").addEventListener("click", handleRefreshPublicEvents);
   $("#public-detail").addEventListener("click", handlePublicRosterButtonClick);
   $("#public-draw-table").addEventListener("click", handleDrawVerifyClick);
-  $("#close-public-roster-dialog").addEventListener("click", closePublicRosterDialog);
-  $("#close-audit-dialog").addEventListener("click", closeAuditDialog);
   $("#close-public-live").addEventListener("click", closePublicLiveDialog);
 
   const rosterDialog = $("#public-roster-dialog");
@@ -82,9 +89,13 @@ function bindPublicPage() {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      void refreshPublicSnapshot();
+    if (document.hidden) {
+      stopPublicAutoRefresh();
+      return;
     }
+
+    void refreshPublicSnapshot();
+    startPublicAutoRefresh();
   });
 }
 
@@ -134,12 +145,16 @@ function configureClient(url, anonKey) {
 }
 
 function renderConnection(connected) {
-  const connectionPill = $("#connection-pill");
-  connectionPill.classList.toggle("is-connected", connected);
-  connectionPill.classList.toggle("is-test-environment", connected && publicState.environmentState && !publicState.environmentState.isDefault);
-  $("#connection-text").textContent = connected && publicState.environmentState && !publicState.environmentState.isDefault
+  const text = connected && publicState.environmentState && !publicState.environmentState.isDefault
     ? `${getActiveEnvironmentLabel()} 已連線`
     : connected ? "Supabase 已連線" : "尚未連線";
+
+  window.ROOC_VUE_CONNECTION_PILL?.render?.({
+    targetSelector: "#connection-pill",
+    connected,
+    isTestEnvironment: publicState.environmentState && !publicState.environmentState.isDefault,
+    text
+  });
 }
 
 async function loadOptionalLocalConfig() {
@@ -233,20 +248,19 @@ async function refreshPublicEvents(preferredSlug = "") {
 function renderPublicEventOptions(preferredSlug = "") {
   const select = $("#public-event-select");
   const current = preferredSlug || select.value;
-  select.innerHTML = "";
-  select.append(new Option("選擇活動", ""));
+  const options = publicState.events.map((event) => ({
+    value: event.slug,
+    label: `${event.title} / ${event.status === "closed" ? "已結束" : "進行中"} / ${formatDate(event.closed_at || event.last_draw_at || event.created_at)}`
+  }));
 
-  publicState.events.forEach((event) => {
-    const label = `${event.title} / ${event.status === "closed" ? "已結束" : "進行中"} / ${formatDate(event.closed_at || event.last_draw_at || event.created_at)}`;
-    select.append(new Option(label, event.slug));
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: "#public-event-select",
+    placeholder: "選擇活動",
+    options,
+    value: current,
+    disabled: publicState.events.length === 0
   });
-
-  if (current && publicState.events.some((event) => event.slug === current)) {
-    select.value = current;
-  }
-
-  select.disabled = publicState.events.length === 0;
-  $("#public-status").textContent = publicState.events.length === 0 ? "沒有紀錄" : `${publicState.events.length} 場`;
+  setText("#public-status", publicState.events.length === 0 ? "沒有紀錄" : `${publicState.events.length} 場`);
 }
 
 async function loadPublicEvent(slug, options = {}) {
@@ -274,6 +288,7 @@ async function loadPublicEvent(slug, options = {}) {
   });
   if (resetSeen) {
     publicState.lastLiveResultKey = "";
+    publicState.tableRenderKeys.clear();
   }
   if (!options.preserveSelect) {
     $("#public-event-select").value = publicState.event.slug;
@@ -366,16 +381,18 @@ function renderPublicEvent() {
 
   $("#public-empty").hidden = true;
   $("#public-detail").hidden = false;
-  $("#public-status").textContent = event.status === "closed" ? "已結束" : "進行中";
-  $("#public-event-status-badge").textContent = event.status === "closed" ? "已結束" : "進行中";
-  $("#public-title").textContent = event.title;
-  $("#public-event-meta").textContent = event.closed_at
+  setText("#public-status", event.status === "closed" ? "已結束" : "進行中");
+  const eventStatus = event.status === "closed" ? "已結束" : "進行中";
+  const eventMeta = event.closed_at
     ? `結束時間：${formatDate(event.closed_at)}`
     : `建立時間：${formatDate(event.created_at)}`;
-  $("#public-stat-prizes").textContent = event.prize_count ?? event.prizes.length;
-  $("#public-stat-awards").textContent = event.award_count ?? event.awards.length;
-  $("#public-stat-draws").textContent = event.draw_count ?? event.draws.length;
-  $("#public-stat-audits").textContent = event.draws.filter((draw) => draw.audit).length;
+  window.ROOC_VUE_PUBLIC_EVENT_HEADER?.render?.({
+    targetSelector: "#public-event-header",
+    title: event.title,
+    status: eventStatus,
+    meta: eventMeta
+  });
+  renderPublicStats(event);
 
   syncPublicRosterButtons();
   renderPublicLiveBanner(event.live_draw);
@@ -385,9 +402,22 @@ function renderPublicEvent() {
   refreshIcons();
 }
 
+function renderPublicStats(event) {
+  return Boolean(window.ROOC_VUE_PUBLIC_STATS?.render?.({
+    targetSelector: "#public-stats-grid",
+    stats: [
+      { label: "獎項數", value: event.prize_count ?? event.prizes.length, rosterKey: "public_prizes" },
+      { label: "中獎紀錄", value: event.award_count ?? event.awards.length, rosterKey: "public_awards" },
+      { label: "抽獎紀錄", value: event.draw_count ?? event.draws.length, rosterKey: "public_draws" },
+      { label: "驗證快照", value: event.draws.filter((draw) => draw.audit).length, rosterKey: "public_audits" }
+    ],
+    onRendered: syncPublicRosterButtons
+  }));
+}
+
 function startPublicAutoRefresh() {
   stopPublicAutoRefresh();
-  if (!publicState.client || !publicState.event?.slug) return;
+  if (!publicState.client || !publicState.event?.slug || publicState.event.status !== "live" || document.hidden) return;
 
   publicState.refreshTimer = window.setInterval(refreshPublicSnapshot, PUBLIC_REFRESH_INTERVAL);
 }
@@ -399,7 +429,7 @@ function stopPublicAutoRefresh() {
 }
 
 async function refreshPublicSnapshot() {
-  if (!publicState.client || !publicState.event?.slug || publicState.isRefreshing) return;
+  if (!publicState.client || !publicState.event?.slug || publicState.isRefreshing || document.hidden) return;
   if (isPublicEventSelectActive()) return;
 
   publicState.isRefreshing = true;
@@ -418,29 +448,10 @@ function isPublicEventSelectActive() {
 }
 
 function renderPublicLiveBanner(live) {
-  const banner = $("#public-live-banner");
-  if (!live) {
-    banner.hidden = true;
-    return;
-  }
-
-  banner.hidden = false;
-  banner.dataset.status = live.status;
-
-  if (live.status === "drawing") {
-    $("#public-live-title").textContent = "抽獎同步中";
-    $("#public-live-text").textContent = `正在抽「${live.prize_name}」，本次 ${live.draw_count} 位。`;
-    return;
-  }
-
-  if (live.status === "completed") {
-    $("#public-live-title").textContent = "剛剛開獎完成";
-    $("#public-live-text").textContent = `「${live.prize_name}」已抽出 ${live.draw_count} 位，紀錄正在同步。`;
-    return;
-  }
-
-  $("#public-live-title").textContent = "剛剛抽獎未完成";
-  $("#public-live-text").textContent = live.error_message || "後台抽獎流程中斷，請等待管理員重新操作。";
+  window.ROOC_VUE_PUBLIC_LIVE_BANNER?.render?.({
+    targetSelector: "#public-live-banner",
+    live
+  });
 }
 
 function handlePublicLiveState(event, newDraws = []) {
@@ -493,12 +504,21 @@ function resolvePublicLiveAnimationChoice(live = {}, draws = []) {
   };
 }
 
+function renderPublicLiveReveal(payload = {}) {
+  return Boolean(window.ROOC_VUE_DRAW_REVEAL?.render?.({
+    targetSelector: "#public-live-reveal-content",
+    resultListId: "public-live-results",
+    flipListId: "public-live-flip-results",
+    ...payload
+  }));
+}
+
 function openPublicLiveAnimation(live = {}) {
   const dialog = $("#public-live-dialog");
   const currentLiveId = live.id || "";
 
   if (dialog.open && publicState.liveDialogId === currentLiveId && !dialog.classList.contains("is-revealed")) {
-    $("#public-live-prize").textContent = live.prize_name || "抽獎";
+    setText("#public-live-prize", live.prize_name || "抽獎");
     return;
   }
 
@@ -515,17 +535,19 @@ function openPublicLiveAnimation(live = {}) {
   dialog.classList.add(`reveal-${publicState.liveRevealMode}`);
   publicState.liveDialogId = currentLiveId;
 
-  $("#public-live-phase").textContent = window.ROOC_DRAW_ANIMATION.phaseText(
+  setText("#public-live-phase", window.ROOC_DRAW_ANIMATION.phaseText(
     publicState.liveAnimationMode,
     live.draw_count || 1,
     publicState.liveRevealMode
-  );
-  $("#public-live-prize").textContent = live.prize_name || "抽獎";
-  $("#public-live-results").innerHTML = "";
-  $("#public-live-flip-results").classList.toggle("is-dense", publicState.liveRevealMode === "flip" && window.ROOC_DRAW_ANIMATION.isDenseFlip(live.draw_count));
-  $("#public-live-flip-results").innerHTML = publicState.liveRevealMode === "flip"
-    ? window.ROOC_DRAW_ANIMATION.renderFlipPlaceholders(live.draw_count || 1, escapeHtml)
-    : "";
+  ));
+  setText("#public-live-prize", live.prize_name || "抽獎");
+  renderPublicLiveReveal({
+    labels: [],
+    rows: [],
+    placeholderCount: publicState.liveRevealMode === "flip" ? live.draw_count || 1 : 0,
+    prizeName: live.prize_name || "抽獎",
+    revealMode: publicState.liveRevealMode
+  });
 
   publicState.liveRollerLabels = buildPublicLiveRollerLabels();
   publicState.liveRollerIndex = 0;
@@ -560,7 +582,6 @@ function revealPublicLiveResults(draws, live = {}) {
   const choice = publicState.liveAnimationChoice || resolvePublicLiveAnimationChoice(live, draws);
   const revealMode = choice.revealMode || "roller";
   const isFlipReveal = revealMode === "flip";
-  const flipResults = $("#public-live-flip-results");
   publicState.liveAnimationChoice = choice;
   publicState.liveAnimationMode = choice.visualMode || "classic";
   publicState.liveRevealMode = revealMode;
@@ -573,16 +594,16 @@ function revealPublicLiveResults(draws, live = {}) {
   dialog.classList.add("is-revealed");
   dialog.classList.toggle("has-multiple-results", hasMultipleResults);
   dialog.classList.toggle("has-flip-results", isFlipReveal);
-  $("#public-live-phase").textContent = isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者");
-  $("#public-live-prize").textContent = live?.prize_name || draws[0]?.prize_name || "抽獎完成";
+  setText("#public-live-phase", isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者"));
+  setText("#public-live-prize", live?.prize_name || draws[0]?.prize_name || "抽獎完成");
   $("#public-live-roller").textContent = isFlipReveal || hasMultipleResults ? "" : (labels[0] || "抽獎完成");
-  $("#public-live-results").innerHTML = (!isFlipReveal && hasMultipleResults ? labels : [])
-    .map((label, index) => `<div class="draw-result-item" style="animation-delay: ${index * 0.06}s">${escapeHtml(label)}</div>`)
-    .join("");
-  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipCards(draws, {
-    prizeName: live?.prize_name || draws[0]?.prize_name || "抽獎完成"
-  }, escapeHtml) : "";
-  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(draws.length));
+  renderPublicLiveReveal({
+    labels: !isFlipReveal && hasMultipleResults ? labels : [],
+    rows: isFlipReveal ? draws : [],
+    placeholderCount: 0,
+    prizeName: live?.prize_name || draws[0]?.prize_name || "抽獎完成",
+    revealMode
+  });
   if (publicState.liveAnimationMode === "fireworks" && !publicState.liveFireworks) {
     startPublicLiveFireworks();
   }
@@ -606,11 +627,16 @@ function revealPublicLiveFailure(live) {
   const dialog = $("#public-live-dialog");
   dialog.classList.add("is-revealed");
   dialog.classList.remove("has-multiple-results", "has-flip-results");
-  $("#public-live-phase").textContent = "抽獎未完成";
-  $("#public-live-prize").textContent = live.prize_name || "抽獎";
+  setText("#public-live-phase", "抽獎未完成");
+  setText("#public-live-prize", live.prize_name || "抽獎");
   $("#public-live-roller").textContent = live.error_message || "請等待管理員重新操作";
-  $("#public-live-results").innerHTML = "";
-  $("#public-live-flip-results").innerHTML = "";
+  renderPublicLiveReveal({
+    labels: [],
+    rows: [],
+    placeholderCount: 0,
+    prizeName: live.prize_name || "抽獎",
+    revealMode: "roller"
+  });
   publicState.lastLiveResultKey = failureKey;
   refreshIcons();
 }
@@ -726,10 +752,18 @@ function openPublicRosterDialog(rosterKey) {
   const list = getPublicRosterList(rosterKey);
   const dialog = $("#public-roster-dialog");
 
-  $("#public-roster-title").textContent = config.title;
-  $("#public-roster-count").textContent = `${list.length} 筆`;
-  $("#public-roster-subtitle").textContent = publicState.event?.title || "目前活動";
-  $("#public-roster-list").innerHTML = renderPublicRosterItems(list, config.empty, rosterKey);
+  window.ROOC_VUE_ROSTER_SHELL?.render?.({
+    targetSelector: "#public-roster-dialog .modal-shell",
+    eyebrow: "名單",
+    title: config.title,
+    closeButtonId: "close-public-roster-dialog",
+    closeLabel: "關閉名單",
+    subtitle: publicState.event?.title || "目前活動",
+    count: list.length,
+    emptyMessage: config.empty,
+    items: buildPublicRosterItems(list, rosterKey),
+    onClose: closePublicRosterDialog
+  });
 
   if ($("#audit-dialog").open) closeAuditDialog();
   if ($("#public-live-dialog").open) closePublicLiveDialog();
@@ -779,44 +813,36 @@ function publicRosterDialogConfig(rosterKey) {
   return configs[rosterKey] || { title: "查看名單", empty: "目前沒有名單資料。" };
 }
 
-function renderPublicRosterItems(list, emptyMessage, rosterKey) {
-  if (list.length === 0) {
-    return `<div class="empty-state compact-empty"><p>${escapeHtml(emptyMessage)}</p></div>`;
-  }
-
+function buildPublicRosterItems(list, rosterKey) {
   if (rosterKey === "public_prizes") {
-    return list.map((prize) => `
-      <article class="roster-member">
-        <strong>${escapeHtml(prize.name)}</strong>
-        <p>${escapeHtml(publicPrizeMeta(prize))}</p>
-      </article>
-    `).join("");
+    return list.map((prize, index) => ({
+      id: prize.id || `public-prize-${index}`,
+      title: prize.name || "未命名獎項",
+      meta: publicPrizeMeta(prize)
+    }));
   }
 
   if (rosterKey === "public_awards") {
-    return list.map((award) => `
-      <article class="roster-member">
-        <strong>${memberText(award.final_member_no, award.final_role_name)}</strong>
-        <p>${escapeHtml(publicAwardMeta(award))}</p>
-      </article>
-    `).join("");
+    return list.map((award, index) => ({
+      id: award.id || `public-award-${index}`,
+      title: memberPlainText(award.final_member_no, award.final_role_name),
+      meta: publicAwardMeta(award)
+    }));
   }
 
   if (rosterKey === "public_audits") {
-    return list.map((draw) => `
-      <article class="roster-member">
-        <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
-        <p>${escapeHtml(publicAuditMeta(draw))}</p>
-      </article>
-    `).join("");
+    return list.map((draw, index) => ({
+      id: draw.id || `public-audit-${index}`,
+      title: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
+      meta: publicAuditMeta(draw)
+    }));
   }
 
-  return list.map((draw) => `
-    <article class="roster-member">
-      <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
-      <p>${escapeHtml(publicDrawMeta(draw))}</p>
-    </article>
-  `).join("");
+  return list.map((draw, index) => ({
+    id: draw.id || `public-draw-${index}`,
+    title: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
+    meta: publicDrawMeta(draw)
+  }));
 }
 
 function publicPrizeMeta(prize) {
@@ -838,76 +864,111 @@ function publicAuditMeta(draw) {
   return `${draw.prize_name || "未命名獎項"} / 可抽 ${audit.eligible_count ?? "-"} 人 / 抽中 #${audit.selected_index ?? "-"} / ${formatPercent(audit.step_probability)}`;
 }
 
+function renderPublicTable(payload = {}) {
+  return Boolean(window.ROOC_VUE_PUBLIC_TABLES?.render?.(payload));
+}
+
+function shouldRenderPublicTable(key, signature) {
+  const previous = publicState.tableRenderKeys.get(key);
+  if (previous === signature) return false;
+
+  publicState.tableRenderKeys.set(key, signature);
+  return true;
+}
+
+function publicRowsSignature(rows, fields = []) {
+  return rows
+    .slice(0, PUBLIC_TABLE_RENDER_LIMIT)
+    .map((row, index) => fields.map((field) => row?.[field] ?? "").join("~") || row?.id || index)
+    .join("|");
+}
+
+function publicTableFooter(totalCount, visibleCount) {
+  const hiddenCount = Math.max(totalCount - visibleCount, 0);
+  return hiddenCount > 0
+    ? `僅顯示最近 ${visibleCount} 筆，另有 ${hiddenCount} 筆可用上方「查看名單」瀏覽。`
+    : "";
+}
+
+function buildPublicPrizeTableRows(prizes) {
+  return prizes.map((prize, index) => ({
+    id: prize.id || `public-prize-row-${index}`,
+    name: prize.name || "",
+    provider: prize.provider || "",
+    quantity: prize.quantity ?? "",
+    filledCount: prize.filled_count ?? "",
+    remainingCount: prize.remaining_count ?? ""
+  }));
+}
+
+function buildPublicAwardTableRows(awards) {
+  return awards.map((award, index) => ({
+    id: award.id || `public-award-row-${index}`,
+    prizeName: award.prize_name || "",
+    provider: award.provider || "",
+    drawnMember: memberPlainText(award.drawn_member_no, award.drawn_role_name),
+    finalMember: memberPlainText(award.final_member_no, award.final_role_name),
+    status: drawStatusText[award.status] || award.status || "",
+    resolvedAt: formatDate(award.resolved_at)
+  }));
+}
+
+function buildPublicDrawTableRows(draws) {
+  return draws.map((draw, index) => ({
+    id: draw.id || `public-draw-row-${index}`,
+    prizeName: draw.prize_name || "",
+    provider: draw.provider || "",
+    drawnMember: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
+    status: publicDrawStatusText(draw),
+    probability: formatPercent(draw.audit?.step_probability)
+  }));
+}
+
 function renderPrizeRows() {
-  const body = $("#public-prize-table");
-  body.innerHTML = "";
+  const rows = publicState.event.prizes || [];
+  const visibleRows = rows.slice(0, PUBLIC_TABLE_RENDER_LIMIT);
+  const signature = `${rows.length}:${publicRowsSignature(visibleRows, ["id", "quantity", "filled_count", "remaining_count"])}`;
+  if (!shouldRenderPublicTable("prizes", signature)) return;
 
-  if (publicState.event.prizes.length === 0) {
-    appendEmptyRow(body, 5, "這場活動沒有獎項紀錄。");
-    return;
-  }
-
-  publicState.event.prizes.forEach((prize) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(prize.name)}</td>
-      <td>${escapeHtml(prize.provider)}</td>
-      <td>${escapeHtml(prize.quantity)}</td>
-      <td>${escapeHtml(prize.filled_count)}</td>
-      <td>${escapeHtml(prize.remaining_count)}</td>
-    `;
-    body.appendChild(row);
+  renderPublicTable({
+    targetSelector: "#public-prize-table",
+    kind: "prizes",
+    rows: buildPublicPrizeTableRows(visibleRows),
+    emptyMessage: "這場活動沒有獎項紀錄。",
+    footerMessage: publicTableFooter(rows.length, visibleRows.length),
+    colspan: 5
   });
 }
 
 function renderAwardRows() {
-  const body = $("#public-award-table");
-  body.innerHTML = "";
+  const rows = publicState.event.awards || [];
+  const visibleRows = rows.slice(0, PUBLIC_TABLE_RENDER_LIMIT);
+  const signature = `${rows.length}:${publicRowsSignature(visibleRows, ["id", "status", "final_member_no", "resolved_at"])}`;
+  if (!shouldRenderPublicTable("awards", signature)) return;
 
-  if (publicState.event.awards.length === 0) {
-    appendEmptyRow(body, 6, "這場活動沒有已確認中獎名單。");
-    return;
-  }
-
-  publicState.event.awards.forEach((award) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(award.prize_name)}</td>
-      <td>${escapeHtml(award.provider)}</td>
-      <td>${memberText(award.drawn_member_no, award.drawn_role_name)}</td>
-      <td>${memberText(award.final_member_no, award.final_role_name)}</td>
-      <td>${escapeHtml(drawStatusText[award.status] || award.status)}</td>
-      <td>${escapeHtml(formatDate(award.resolved_at))}</td>
-    `;
-    body.appendChild(row);
+  renderPublicTable({
+    targetSelector: "#public-award-table",
+    kind: "awards",
+    rows: buildPublicAwardTableRows(visibleRows),
+    emptyMessage: "這場活動沒有已確認中獎名單。",
+    footerMessage: publicTableFooter(rows.length, visibleRows.length),
+    colspan: 6
   });
 }
 
 function renderDrawRows() {
-  const body = $("#public-draw-table");
-  body.innerHTML = "";
+  const rows = publicState.event.draws || [];
+  const visibleRows = rows.slice(0, PUBLIC_TABLE_RENDER_LIMIT);
+  const signature = `${rows.length}:${publicRowsSignature(visibleRows, ["id", "status", "final_member_no", "updated_at", "resolved_at"])}`;
+  if (!shouldRenderPublicTable("draws", signature)) return;
 
-  if (publicState.event.draws.length === 0) {
-    appendEmptyRow(body, 6, "這場活動沒有抽獎紀錄。");
-    return;
-  }
-
-  publicState.event.draws.forEach((draw) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(draw.prize_name)}</td>
-      <td>${escapeHtml(draw.provider || "")}</td>
-      <td>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</td>
-      <td>${escapeHtml(publicDrawStatusText(draw))}</td>
-      <td>${escapeHtml(formatPercent(draw.audit?.step_probability))}</td>
-      <td>
-        <button class="btn table-action" type="button" data-verify-draw="${escapeHtml(draw.id)}">
-          <i data-lucide="shield-check"></i>
-          <span>驗證</span>
-        </button>
-      </td>
-    `;
-    body.appendChild(row);
+  renderPublicTable({
+    targetSelector: "#public-draw-table",
+    kind: "draws",
+    rows: buildPublicDrawTableRows(visibleRows),
+    emptyMessage: "這場活動沒有抽獎紀錄。",
+    footerMessage: publicTableFooter(rows.length, visibleRows.length),
+    colspan: 6
   });
 }
 
@@ -934,7 +995,6 @@ function handleDrawVerifyClick(event) {
 
 function openAuditDialog(draw) {
   const dialog = $("#audit-dialog");
-  $("#audit-title").textContent = `${draw.prize_name} / ${memberPlainText(draw.drawn_member_no, draw.drawn_role_name)}`;
   renderAuditContent(draw, { status: "checking" });
   dialog.showModal();
   refreshIcons();
@@ -951,109 +1011,20 @@ function closeAuditDialog() {
 
 function renderAuditContent(draw, verification) {
   const audit = draw.audit;
-  const body = $("#audit-content");
-
-  if (!audit) {
-    body.innerHTML = `
-      <div class="verification-result is-warning">
-        <i data-lucide="triangle-alert"></i>
-        <div>
-          <strong>這筆紀錄沒有公平快照</strong>
-          <p>它可能是在公開驗證功能上線前建立，只能查看基本抽獎紀錄，不能做完整 Hash 驗證。</p>
-        </div>
-      </div>
-    `;
-    refreshIcons();
-    return;
-  }
-
-  const providerExcluded = audit.provider_excluded ? 1 : 0;
-  const eligibleMembers = asArray(audit.eligible_members);
-  const selectedMember = eligibleMembers.find((member) => Number(member.position) === Number(audit.selected_index));
-  const hasFullSnapshot = canVerifyDrawAudit(draw, audit);
-  const verifiedClass = verification.status === "passed"
-    ? "is-passed"
-    : verification.status === "failed"
-      ? "is-failed"
-      : verification.status === "warning"
-        ? "is-warning"
-        : "";
-  const verifiedIcon = verification.status === "passed"
-    ? "circle-check"
-    : verification.status === "failed"
-      ? "circle-alert"
-      : verification.status === "warning"
-        ? "triangle-alert"
-        : "loader";
-  const verifiedTitle = verification.status === "passed"
-    ? "瀏覽器重算通過"
-    : verification.status === "failed"
-      ? "瀏覽器重算失敗"
-      : verification.status === "warning"
-        ? "驗證資料不足"
-        : "正在重算驗證";
-  const verifiedMessage = verification.message || "正在用公開 seed、名單 Hash 與 SHA-256 重新計算中獎位置。";
-
-  body.innerHTML = `
-    <div class="verification-result ${verifiedClass}">
-      <i data-lucide="${verifiedIcon}"></i>
-      <div>
-        <strong>${escapeHtml(verifiedTitle)}</strong>
-        <p>${escapeHtml(verifiedMessage)}</p>
-      </div>
-    </div>
-
-    <section class="audit-section">
-      <h4>機率公式</h4>
-      <div class="audit-grid">
-        <div><span>公會中成員</span><strong>${escapeHtml(displayAuditValue(audit.active_member_count))}</strong></div>
-        <div><span>已排除</span><strong>${escapeHtml(displayAuditValue(audit.excluded_count_before))}</strong></div>
-        <div><span>提供者排除</span><strong>${providerExcluded}</strong></div>
-        <div><span>可抽人數</span><strong>${escapeHtml(displayAuditValue(audit.eligible_count))}</strong></div>
-      </div>
-      ${audit.active_member_count !== "" && audit.excluded_count_before !== ""
-        ? `<p class="description">可抽人數 = 公會中 ${escapeHtml(audit.active_member_count)} - 已排除 ${escapeHtml(audit.excluded_count_before)} - 提供者排除 ${providerExcluded} = ${escapeHtml(displayAuditValue(audit.eligible_count))}</p>`
-        : ""}
-      <p class="description">本次第 ${escapeHtml(displayAuditValue(audit.round_index))} 抽的單步機率 = 1 / ${escapeHtml(displayAuditValue(audit.eligible_count))} = ${escapeHtml(formatPercent(audit.step_probability))}；本輪一次抽出 ${escapeHtml(displayAuditValue(audit.round_draw_count))} 位，開抽時每人本輪機率約 ${escapeHtml(formatPercent(audit.round_probability))}。</p>
-    </section>
-
-    ${hasFullSnapshot ? `
-      <section class="audit-section">
-        <h4>Hash 驗證</h4>
-        <div class="hash-list">
-          <div><span>演算法</span><code>${escapeHtml(audit.algorithm)}</code></div>
-          <div><span>Random Seed</span><code>${escapeHtml(audit.random_seed)}</code></div>
-          <div><span>名單 Hash</span><code>${escapeHtml(audit.eligible_manifest_hash)}</code></div>
-          <div><span>結果 Hash</span><code>${escapeHtml(audit.selector_hash)}</code></div>
-          <div><span>抽中位置</span><code>#${escapeHtml(audit.selected_index)} / ${escapeHtml(audit.eligible_count)}</code></div>
-          <div><span>位置對應</span><code>${escapeHtml(memberPlainText(selectedMember?.member_no, selectedMember?.role_name))}</code></div>
-        </div>
-      </section>
-
-      <section class="audit-section">
-        <h4>當下可抽名單快照</h4>
-        <div class="eligible-list">
-          ${eligibleMembers.map((member) => `
-            <div class="${Number(member.position) === Number(audit.selected_index) ? "is-selected" : ""}">
-              <span>#${escapeHtml(member.position)}</span>
-              <strong>${escapeHtml(memberPlainText(member.member_no, member.role_name))}</strong>
-              <small>${escapeHtml(member.occupation || "未填職業")}</small>
-            </div>
-          `).join("")}
-        </div>
-      </section>
-    ` : `
-      <section class="audit-section">
-        <h4>基礎驗證資料</h4>
-        <div class="hash-list">
-          <div><span>Random Token</span><code>${escapeHtml(audit.random_seed || "-")}</code></div>
-          <div><span>名單 Hash</span><code>${escapeHtml(audit.eligible_manifest_hash || "-")}</code></div>
-          <div><span>抽中位置</span><code>#${escapeHtml(displayAuditValue(audit.selected_index))} / ${escapeHtml(displayAuditValue(audit.eligible_count))}</code></div>
-        </div>
-        <p class="description">這筆資料缺少完整可抽名單或結果 Hash，因此目前只能顯示機率與基礎公開紀錄，不能在瀏覽器完整重算 Hash。</p>
-      </section>
-    `}
-  `;
+  const title = `${draw.prize_name} / ${memberPlainText(draw.drawn_member_no, draw.drawn_role_name)}`;
+  window.ROOC_VUE_AUDIT_SHELL?.render?.({
+    targetSelector: "#audit-dialog .modal-shell",
+    title,
+    draw,
+    verification,
+    hasFullSnapshot: audit ? canVerifyDrawAudit(draw, audit) : false,
+    helpers: {
+      displayAuditValue,
+      formatPercent,
+      memberPlainText
+    },
+    onClose: closeAuditDialog
+  });
   refreshIcons();
 }
 
@@ -1180,26 +1151,9 @@ async function withBusy(target, task) {
 }
 
 function showToast(message, type = "info") {
-  const stack = $("#toast-stack");
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.dataset.type = type;
-  toast.innerHTML = `
-    <i data-lucide="${toastIcon(type)}"></i>
-    <div class="toast-content">${escapeHtml(message)}</div>
-    <button class="toast-dismiss" type="button" aria-label="關閉提示"><i data-lucide="x"></i></button>
-  `;
-  toast.querySelector(".toast-dismiss").addEventListener("click", () => toast.remove());
-  stack.appendChild(toast);
-  refreshIcons();
-  window.setTimeout(() => toast.remove(), 4200);
-}
-
-function toastIcon(type) {
-  if (type === "success") return "circle-check";
-  if (type === "error") return "circle-alert";
-  if (type === "warning") return "triangle-alert";
-  return "info";
+  window.ROOC_VUE_TOASTS?.show?.(message, type, {
+    duration: 4200
+  });
 }
 
 function cleanRequired(value, message) {
@@ -1237,11 +1191,6 @@ function asArray(value) {
   }
 }
 
-function appendEmptyRow(body, colspan, message) {
-  const row = document.createElement("tr");
-  row.innerHTML = `<td colspan="${colspan}" class="empty-cell">${escapeHtml(message)}</td>`;
-  body.appendChild(row);
-}
 
 function memberText(memberNo, displayName) {
   return escapeHtml(memberPlainText(memberNo, displayName));

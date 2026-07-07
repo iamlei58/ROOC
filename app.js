@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
 
 const PENDING_DRAW_PAGE_SIZE = 20;
 const DRAW_LOG_RENDER_LIMIT = 80;
+const AWARD_RENDER_LIMIT = 120;
 const DRAW_EFFECT_CLEANUP_MS = 2600;
 
 const state = {
@@ -97,13 +98,23 @@ function $all(selector) {
   return Array.from(document.querySelectorAll(selector));
 }
 
+function setText(selector, text) {
+  window.ROOC_VUE_TEXT_CONTENT?.render?.({
+    targetSelector: selector,
+    text: text ?? ""
+  });
+}
+
 function bindTabs() {
+  if (renderAdminTabs("console")) return;
+
   $all("[data-tab]").forEach((tab) => {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
   });
 }
 
 function switchTab(tabName) {
+  window.ROOC_VUE_ADMIN_TABS?.setActive?.(tabName);
   $all("[data-tab]").forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === tabName);
   });
@@ -119,6 +130,20 @@ function switchTab(tabName) {
     void prepareHistoryPanel();
   }
   refreshIcons();
+}
+
+function renderAdminTabs(activeTab = "console") {
+  return Boolean(window.ROOC_VUE_ADMIN_TABS?.render?.({
+    targetSelector: "#admin-tabs",
+    activeTab,
+    tabs: [
+      { key: "console", label: "抽獎控制台", icon: "sparkles" },
+      { key: "history", label: "歷史紀錄", icon: "history" },
+      { key: "members", label: "成員", icon: "users" }
+    ],
+    onSelect: switchTab,
+    onRendered: refreshIcons
+  }));
 }
 
 function bindForms() {
@@ -146,7 +171,6 @@ function bindForms() {
   $("#pending-card").addEventListener("click", handleClearPendingTransfer);
   $("#pending-card").addEventListener("submit", handlePendingTransfer);
   $("#pending-card").addEventListener("change", handlePendingTransferSelection);
-  $("#pending-show-more").addEventListener("click", showMorePendingDraws);
   $("#refresh-event").addEventListener("click", () => reloadEvent());
   $all(".stats-grid").forEach((grid) => {
     grid.addEventListener("click", handleRosterButtonClick);
@@ -169,10 +193,6 @@ function bindForms() {
   $("#dismiss-admin-pin").addEventListener("click", cancelAdminPinPrompt);
   $("#return-public-from-login").addEventListener("click", returnToPublicPage);
   $("#dismiss-change-admin-pin").addEventListener("click", cancelAdminPinPrompt);
-  $("#close-roster-dialog").addEventListener("click", closeRosterDialog);
-  $("#confirm-dialog-accept").addEventListener("click", () => closeConfirmDialog(true));
-  $("#confirm-dialog-cancel").addEventListener("click", () => closeConfirmDialog(false));
-  $("#confirm-dialog-close").addEventListener("click", () => closeConfirmDialog(false));
   $("#open-member-create-dialog").addEventListener("click", openMemberCreateDialog);
   $("#close-member-create-dialog").addEventListener("click", closeMemberCreateDialog);
   $("#open-member-import-dialog").addEventListener("click", openMemberImportDialog);
@@ -196,9 +216,11 @@ function bindForms() {
   $("#member-search-form").addEventListener("submit", handleMemberSearch);
   $("#member-search-form").elements.query.addEventListener("input", scheduleMemberSearch);
   $("#member-search-form").elements.include_inactive.addEventListener("change", () => scheduleMemberSearch(0));
-  $all("[data-member-sort]").forEach((button) => {
-    button.addEventListener("click", () => sortMembersBy(button.dataset.memberSort));
-  });
+  if (!renderMemberSortHead()) {
+    $all("[data-member-sort]").forEach((button) => {
+      button.addEventListener("click", () => sortMembersBy(button.dataset.memberSort));
+    });
+  }
   bindDialogBackdrops();
 }
 
@@ -253,7 +275,7 @@ function hydrateStoredPins() {
   state.appAdminPin = readSessionValue(STORAGE_KEYS.appAdminPin);
 
   if (state.appAdminPin) {
-    $("#member-status").textContent = "已登入";
+    setText("#member-status", "已登入");
     $("#change-admin-pin").hidden = false;
     $("#logout-admin").hidden = false;
   }
@@ -325,12 +347,16 @@ function configureClient(url, anonKey) {
 }
 
 function renderConnection(connected) {
-  const connectionPill = $("#connection-pill");
-  connectionPill.classList.toggle("is-connected", connected);
-  connectionPill.classList.toggle("is-test-environment", connected && state.environmentState && !state.environmentState.isDefault);
-  $("#connection-text").textContent = connected && state.environmentState && !state.environmentState.isDefault
+  const text = connected && state.environmentState && !state.environmentState.isDefault
     ? `${getActiveEnvironmentLabel()} 已連線`
     : connected ? "Supabase 已連線" : "尚未連線";
+
+  window.ROOC_VUE_CONNECTION_PILL?.render?.({
+    targetSelector: "#connection-pill",
+    connected,
+    isTestEnvironment: state.environmentState && !state.environmentState.isDefault,
+    text
+  });
 }
 
 async function loadOptionalLocalConfig() {
@@ -437,7 +463,7 @@ function writeSessionValue(key, value) {
 function rememberAppAdminPin(pin) {
   state.appAdminPin = pin;
   writeSessionValue(STORAGE_KEYS.appAdminPin, pin);
-  $("#member-status").textContent = "已登入";
+  setText("#member-status", "已登入");
   $("#change-admin-pin").hidden = false;
   $("#logout-admin").hidden = false;
 }
@@ -458,12 +484,12 @@ function forgetAppAdminPin() {
   writeSessionValue(STORAGE_KEYS.appAdminPin, "");
   writeLocalValue(STORAGE_KEYS.eventSlug, "");
   writeLocalValue(STORAGE_KEYS.eventTitle, "");
-  $("#member-status").textContent = "未載入";
+  setText("#member-status", "未載入");
   $("#change-admin-pin").hidden = true;
   $("#logout-admin").hidden = true;
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
-  $("#console-status").textContent = "未載入";
+  setText("#console-status", "未載入");
   renderOpenEventOptions();
   renderHistoryEventOptions();
   clearHistoryDetail();
@@ -551,32 +577,34 @@ function renderOpenEventOptions(preferredSlug = "") {
   const current = preferredSlug || select.value;
   const hasOpenEvents = state.openEvents.length > 0;
   destroyEnhancedSelect(select);
-  select.innerHTML = "";
-  select.append(new Option(hasOpenEvents ? "選擇活動" : "目前沒有未完成活動", ""));
+  const options = state.openEvents.map((event) => ({
+    value: event.slug,
+    label: `${event.title} / ${formatDate(event.created_at)}`
+  }));
+  const nextValue = current && state.openEvents.some((event) => event.slug === current) ? current : "";
 
-  state.openEvents.forEach((event) => {
-    const label = `${event.title} / ${formatDate(event.created_at)}`;
-    select.append(new Option(label, event.slug));
-  });
-
-  if (current && Array.from(select.options).some((option) => option.value === current)) {
-    select.value = current;
-    state.eventSlugHint = current;
-  } else {
-    select.value = "";
-    if (current && current === state.eventSlugHint) {
-      state.eventSlugHint = "";
-      writeLocalValue(STORAGE_KEYS.eventSlug, "");
-    }
+  if (nextValue) {
+    state.eventSlugHint = nextValue;
+  } else if (current && current === state.eventSlugHint) {
+    state.eventSlugHint = "";
+    writeLocalValue(STORAGE_KEYS.eventSlug, "");
   }
 
-  select.disabled = !hasOpenEvents;
   $("#load-event-form button[type='submit']").disabled = !hasOpenEvents;
-  enhanceSelect(select, {
-    placeholder: hasOpenEvents ? "搜尋未完成活動" : "目前沒有未完成活動，請先建立活動",
-    noResults: "沒有未完成活動"
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: "#event-title-select",
+    placeholder: hasOpenEvents ? "選擇活動" : "目前沒有未完成活動",
+    options,
+    value: nextValue,
+    disabled: !hasOpenEvents,
+    onRendered: () => {
+      enhanceSelect(select, {
+        placeholder: hasOpenEvents ? "搜尋未完成活動" : "目前沒有未完成活動，請先建立活動",
+        noResults: "沒有未完成活動"
+      });
+      syncEnhancedSelect(select);
+    }
   });
-  syncEnhancedSelect(select);
 }
 
 async function refreshHistoryEvents(preferredSlug = "") {
@@ -594,27 +622,27 @@ function renderHistoryEventOptions(preferredSlug = "") {
   const current = preferredSlug || select.value;
   const hasHistoryEvents = state.historyEvents.length > 0;
   destroyEnhancedSelect(select);
-  select.innerHTML = "";
-  select.append(new Option(hasHistoryEvents ? "選擇歷史活動" : "目前沒有已結束活動", ""));
+  const options = state.historyEvents.map((event) => ({
+    value: event.slug,
+    label: `${event.title} / ${formatDate(event.closed_at || event.created_at)}`
+  }));
+  const nextValue = current && state.historyEvents.some((event) => event.slug === current) ? current : "";
 
-  state.historyEvents.forEach((event) => {
-    const label = `${event.title} / ${formatDate(event.closed_at || event.created_at)}`;
-    select.append(new Option(label, event.slug));
-  });
-
-  if (current && Array.from(select.options).some((option) => option.value === current)) {
-    select.value = current;
-  } else {
-    select.value = "";
-  }
-
-  select.disabled = !hasHistoryEvents;
   $("#history-event-form button[type='submit']").disabled = !hasHistoryEvents;
-  enhanceSelect(select, {
-    placeholder: hasHistoryEvents ? "搜尋已結束活動" : "目前沒有已結束活動",
-    noResults: "沒有歷史活動"
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: "#history-event-select",
+    placeholder: hasHistoryEvents ? "選擇歷史活動" : "目前沒有已結束活動",
+    options,
+    value: nextValue,
+    disabled: !hasHistoryEvents,
+    onRendered: () => {
+      enhanceSelect(select, {
+        placeholder: hasHistoryEvents ? "搜尋已結束活動" : "目前沒有已結束活動",
+        noResults: "沒有歷史活動"
+      });
+      syncEnhancedSelect(select);
+    }
   });
-  syncEnhancedSelect(select);
 }
 
 async function refreshPrizeProviderMembers() {
@@ -662,25 +690,26 @@ function populatePrizeProviderSelect(preferredMemberNo = "") {
 
   const current = preferredMemberNo || select.value;
   destroyEnhancedSelect(select);
-  select.innerHTML = "";
-  select.append(new Option("選擇提供者", ""));
+  const options = state.providerMembers.map((member) => ({
+    value: member.member_no,
+    label: memberOptionLabel(member)
+  }));
+  const nextValue = current && state.providerMembers.some((member) => member.member_no === current) ? current : "";
 
-  state.providerMembers.forEach((member) => {
-    select.append(new Option(memberOptionLabel(member), member.member_no));
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: "#prize-provider-select",
+    placeholder: "選擇提供者",
+    options,
+    value: nextValue,
+    disabled: state.providerMembers.length === 0,
+    onRendered: () => {
+      enhanceSelect(select, {
+        placeholder: "搜尋提供者",
+        noResults: "找不到公會中成員"
+      });
+      syncEnhancedSelect(select);
+    }
   });
-
-  if (current && Array.from(select.options).some((option) => option.value === current)) {
-    select.value = current;
-  } else {
-    select.value = "";
-  }
-
-  select.disabled = state.providerMembers.length === 0;
-  enhanceSelect(select, {
-    placeholder: "搜尋提供者",
-    noResults: "找不到公會中成員"
-  });
-  syncEnhancedSelect(select);
 }
 
 function populateTransferMemberSelect(preferredMemberNo = "") {
@@ -690,17 +719,6 @@ function populateTransferMemberSelect(preferredMemberNo = "") {
   selects.forEach((select) => {
     const current = preferredMemberNo || select.value;
     destroyEnhancedSelect(select);
-    select.innerHTML = "";
-    const placeholder = state.transferCandidatesLoading
-      ? "載入可轉讓名單中"
-      : state.transferCandidates.length === 0
-        ? "沒有可轉讓成員"
-        : "選擇轉讓對象";
-    select.append(new Option(placeholder, ""));
-
-    state.transferCandidates.forEach((member) => {
-      select.append(new Option(memberOptionLabel(member), member.member_no));
-    });
 
     if (current && Array.from(select.options).some((option) => option.value === current)) {
       select.value = current;
@@ -805,15 +823,15 @@ function getSelectedDrawLimit() {
 }
 
 function renderDrawOdds() {
-  const card = $("#draw-odds-card");
-  if (!card) return;
-
   const { prize, eligibleRemaining, limit } = getSelectedDrawLimit();
   const countInput = $("#draw-count");
   const rawDrawCount = Number(countInput?.value || 1);
 
   if (!state.event || !prize || eligibleRemaining <= 0 || limit <= 0) {
-    card.hidden = true;
+    window.ROOC_VUE_DRAW_ODDS?.render?.({
+      targetSelector: "#draw-odds-card",
+      hidden: true
+    });
     return;
   }
 
@@ -822,10 +840,15 @@ function renderDrawOdds() {
   const providerExcluded = prize.provider_excluded ? 1 : 0;
   const excludedCount = Number(state.event.excluded_count || 0);
   const activeCount = Number(state.event.total_active_members || 0);
+  const probabilityText = `${drawCount}/${eligibleRemaining} = ${formatPercent(probability)}`;
+  const formula = `可抽人數 = 公會中 ${activeCount} - 已排除 ${excludedCount} - 獎項提供者 ${providerExcluded} = ${eligibleRemaining}；每位本輪機率 = 抽出人數 / 可抽人數。`;
 
-  $("#draw-odds-probability").textContent = `${drawCount}/${eligibleRemaining} = ${formatPercent(probability)}`;
-  $("#draw-odds-formula").textContent = `可抽人數 = 公會中 ${activeCount} - 已排除 ${excludedCount} - 獎項提供者 ${providerExcluded} = ${eligibleRemaining}；每位本輪機率 = 抽出人數 / 可抽人數。`;
-  card.hidden = false;
+  window.ROOC_VUE_DRAW_ODDS?.render?.({
+    targetSelector: "#draw-odds-card",
+    hidden: false,
+    probability: probabilityText,
+    formula
+  });
 }
 
 async function handleLoadEvent(event) {
@@ -885,10 +908,10 @@ function openBonusPrizeDialog(prizeId = "") {
 
   form.dataset.mode = isExistingPrize ? "quantity" : "create";
   $("#bonus-prize-id").value = prize?.id || "";
-  $("#bonus-prize-mode").textContent = isExistingPrize ? "調整" : "新增";
-  $("#bonus-prize-title").textContent = isExistingPrize ? "調整獎項名額" : "新增獎項";
-  $("#bonus-prize-submit-label").textContent = isExistingPrize ? "儲存名額" : "新增獎項";
-  $("#bonus-quantity-label").textContent = isExistingPrize ? "總名額" : "名額";
+  setText("#bonus-prize-mode", isExistingPrize ? "調整" : "新增");
+  setText("#bonus-prize-title", isExistingPrize ? "調整獎項名額" : "新增獎項");
+  setText("#bonus-prize-submit-label", isExistingPrize ? "儲存名額" : "新增獎項");
+  setText("#bonus-quantity-label", isExistingPrize ? "總名額" : "名額");
 
   $all("[data-new-prize-field]").forEach((field) => {
     field.hidden = isExistingPrize;
@@ -903,7 +926,7 @@ function openBonusPrizeDialog(prizeId = "") {
     const usedCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
     const currentQuantity = Number(prize.quantity || 0);
     $("#bonus-selected-prize").hidden = false;
-    $("#bonus-selected-prize-name").textContent = `${prize.name} / ${prize.provider} / 目前 ${currentQuantity} 名額，已抽或待處理 ${usedCount} 名`;
+    setText("#bonus-selected-prize-name", `${prize.name} / ${prize.provider} / 目前 ${currentQuantity} 名額，已抽或待處理 ${usedCount} 名`);
     quantityInput.min = String(Math.max(usedCount, 1));
     quantityInput.max = "200";
     quantityInput.value = String(Math.max(currentQuantity, usedCount, 1));
@@ -947,11 +970,11 @@ function resetBonusPrizeForm() {
   form.dataset.mode = "create";
   $("#bonus-prize-id").value = "";
   $("#bonus-selected-prize").hidden = true;
-  $("#bonus-selected-prize-name").textContent = "";
-  $("#bonus-prize-mode").textContent = "新增";
-  $("#bonus-prize-title").textContent = "新增獎項";
-  $("#bonus-prize-submit-label").textContent = "新增獎項";
-  $("#bonus-quantity-label").textContent = "名額";
+  setText("#bonus-selected-prize-name", "");
+  setText("#bonus-prize-mode", "新增");
+  setText("#bonus-prize-title", "新增獎項");
+  setText("#bonus-prize-submit-label", "新增獎項");
+  setText("#bonus-quantity-label", "名額");
   $("#bonus-prize-quantity").min = "1";
   $("#bonus-prize-quantity").max = "200";
   $("#bonus-prize-quantity").disabled = false;
@@ -1100,22 +1123,44 @@ function renderHistoryEvent() {
 
   $("#history-empty").hidden = true;
   $("#history-detail").hidden = false;
-  $("#history-status").textContent = eventStatusText[event.status] || event.status;
-  $("#history-event-status-badge").textContent = eventStatusText[event.status] || event.status;
-  $("#history-title").textContent = event.title;
-  $("#history-closed-at").textContent = event.closed_at ? `結束時間：${formatDate(event.closed_at)}` : `建立時間：${formatDate(event.created_at)}`;
-  $("#history-stat-prizes").textContent = event.prizes.length;
-  $("#history-stat-awards").textContent = event.awards.length;
-  $("#history-stat-draws").textContent = event.recent_draws.length;
-  $("#history-stat-excluded").textContent = event.excluded_count ?? 0;
+  setText("#history-status", eventStatusText[event.status] || event.status);
+  const historyStatus = eventStatusText[event.status] || event.status;
+  const historyMeta = event.closed_at ? `結束時間：${formatDate(event.closed_at)}` : `建立時間：${formatDate(event.created_at)}`;
+  renderAdminEventHeader({
+    targetSelector: "#admin-history-event-header",
+    label: "活動",
+    title: event.title,
+    status: historyStatus,
+    meta: historyMeta
+  });
+  renderAdminHistoryStats(event);
   syncHistoryRosterButtons();
 
   renderPrizeRows("#history-prize-table", event.prizes, "這場活動沒有獎項紀錄。");
-  renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。");
+  renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。", {
+    limit: AWARD_RENDER_LIMIT
+  });
   renderDrawLogRows("#history-draw-log-table", event.recent_draws, "這場活動沒有抽獎紀錄。", event.slug, {
     limit: DRAW_LOG_RENDER_LIMIT
   });
   refreshIcons();
+}
+
+function renderAdminHistoryStats(event) {
+  return Boolean(window.ROOC_VUE_ADMIN_STATS?.render?.({
+    targetSelector: "#admin-history-stats-grid",
+    stats: [
+      { key: "history_prizes", label: "獎項數", value: event.prizes.length, historyRosterKey: "history_prizes" },
+      { key: "history_awards", label: "中獎紀錄", value: event.awards.length, historyRosterKey: "history_awards" },
+      { key: "history_draws", label: "抽獎紀錄", value: event.recent_draws.length, historyRosterKey: "history_draws" },
+      { key: "history_excluded_members", label: "已排除", value: event.excluded_count ?? 0, historyRosterKey: "history_excluded_members" }
+    ],
+    onRendered: syncHistoryRosterButtons
+  }));
+}
+
+function renderAdminEventHeader(payload = {}) {
+  return Boolean(window.ROOC_VUE_ADMIN_EVENT_HEADER?.render?.(payload));
 }
 
 function clearHistoryDetail() {
@@ -1125,10 +1170,14 @@ function clearHistoryDetail() {
 
   detail.hidden = true;
   empty.hidden = false;
-  $("#history-status").textContent = "未載入";
-  $("#history-title").textContent = "尚未載入";
-  $("#history-event-status-badge").textContent = "未載入";
-  $("#history-closed-at").textContent = "";
+  setText("#history-status", "未載入");
+  renderAdminEventHeader({
+    targetSelector: "#admin-history-event-header",
+    label: "活動",
+    title: "尚未載入",
+    status: "未載入",
+    meta: ""
+  });
 }
 
 function normalizeEvent(event) {
@@ -1147,13 +1196,15 @@ function renderEvent() {
   const event = state.event;
   $("#console-empty").hidden = true;
   $("#console-detail").hidden = false;
-  $("#console-status").textContent = eventStatusText[event.status] || event.status;
-  $("#event-status-badge").textContent = eventStatusText[event.status] || event.status;
-  $("#event-title").textContent = event.title;
-  $("#stat-active-members").textContent = event.total_active_members ?? 0;
-  $("#stat-eligible").textContent = event.eligible_count ?? 0;
-  $("#stat-excluded").textContent = event.excluded_count ?? 0;
-  $("#stat-awards").textContent = event.award_count ?? 0;
+  setText("#console-status", eventStatusText[event.status] || event.status);
+  const eventStatus = eventStatusText[event.status] || event.status;
+  renderAdminEventHeader({
+    targetSelector: "#admin-console-event-header",
+    label: "抽獎",
+    title: event.title,
+    status: eventStatus
+  });
+  renderAdminConsoleStats(event);
   syncRosterButtons();
 
   $("#close-event").disabled = event.status === "closed";
@@ -1169,33 +1220,45 @@ function renderEvent() {
   refreshIcons();
 }
 
+function renderAdminConsoleStats(event) {
+  return Boolean(window.ROOC_VUE_ADMIN_STATS?.render?.({
+    targetSelector: "#admin-console-stats-grid",
+    stats: [
+      { key: "active_members", label: "公會中成員", value: event.total_active_members ?? 0, rosterKey: "active_members" },
+      { key: "eligible_members", label: "可抽名單", value: event.eligible_count ?? 0, rosterKey: "eligible_members" },
+      { key: "excluded_members", label: "已排除", value: event.excluded_count ?? 0, rosterKey: "excluded_members" },
+      { key: "awarded_members", label: "已發獎", value: event.award_count ?? 0, rosterKey: "awarded_members" }
+    ],
+    onRendered: syncRosterButtons
+  }));
+}
+
 function renderPrizeOptions() {
   const select = $("#draw-prize-select");
   const previousValue = select.value;
-  select.innerHTML = "";
 
   const prizes = state.event.prizes || [];
-  if (prizes.length === 0) {
-    select.append(new Option("尚未新增獎項", ""));
-    select.disabled = true;
-    $("#draw-prize").disabled = true;
-    updateDrawCountLimit();
-    return;
-  }
-
-  prizes.forEach((prize) => {
+  const options = prizes.map((prize) => {
     const drawLimit = Math.min(
       Math.max(Number(prize.remaining_count || 0), 0),
       Math.max(Number(prize.eligible_count ?? state.event?.eligible_count ?? 0), 0)
     );
-    const label = `${prize.name} / ${prize.provider} / 可抽 ${drawLimit}`;
-    select.append(new Option(label, prize.id));
+    return {
+      value: prize.id,
+      label: `${prize.name} / ${prize.provider} / 可抽 ${drawLimit}`
+    };
   });
-  if (previousValue && prizes.some((prize) => prize.id === previousValue)) {
-    select.value = previousValue;
-  }
-  select.disabled = false;
-  $("#draw-prize").disabled = state.event.status !== "live";
+  const nextValue = previousValue && prizes.some((prize) => prize.id === previousValue) ? previousValue : "";
+
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: "#draw-prize-select",
+    placeholder: prizes.length === 0 ? "尚未新增獎項" : "選擇獎項",
+    options,
+    value: nextValue,
+    disabled: prizes.length === 0,
+    onRendered: updateDrawCountLimit
+  });
+  $("#draw-prize").disabled = prizes.length === 0 || state.event.status !== "live";
   updateDrawCountLimit();
 }
 
@@ -1255,10 +1318,20 @@ async function ensureRosterLoaded(rosterKey, source = "console") {
 function openRosterDialog(rosterKey, source = "console") {
   const config = rosterDialogConfig(rosterKey);
   const list = getRosterList(rosterKey, source);
-  $("#roster-dialog-title").textContent = config.title;
-  $("#roster-dialog-count").textContent = `${list.length} 筆`;
-  $("#roster-dialog-subtitle").textContent = (source === "history" ? state.historyEvent?.title : state.event?.title) || "目前活動";
-  $("#roster-dialog-list").innerHTML = renderRosterDialogItems(list, config.empty, rosterKey);
+  const subtitle = (source === "history" ? state.historyEvent?.title : state.event?.title) || "目前活動";
+
+  window.ROOC_VUE_ROSTER_SHELL?.render?.({
+    targetSelector: "#roster-dialog .modal-shell",
+    eyebrow: "名單",
+    title: config.title,
+    closeButtonId: "close-roster-dialog",
+    closeLabel: "關閉名單",
+    subtitle,
+    count: list.length,
+    emptyMessage: config.empty,
+    items: buildRosterDialogItems(list, rosterKey),
+    onClose: closeRosterDialog
+  });
   showModalDialog($("#roster-dialog"));
   refreshIcons();
 }
@@ -1337,52 +1410,36 @@ function rosterDialogConfig(rosterKey) {
   return configs[rosterKey] || { title: "查看名單", empty: "目前沒有名單資料。" };
 }
 
-function renderRosterDialogItems(list, emptyMessage, rosterKey = "") {
-  if (list.length === 0) {
-    return `<div class="empty-state compact-empty"><p>${escapeHtml(emptyMessage)}</p></div>`;
-  }
-
+function buildRosterDialogItems(list, rosterKey = "") {
   if (rosterKey === "history_prizes") {
-    return list.map((prize) => `
-      <article class="roster-member">
-        <div>
-          <strong>${escapeHtml(prize.name)}</strong>
-          <p>${escapeHtml(historyPrizeMeta(prize))}</p>
-        </div>
-      </article>
-    `).join("");
+    return list.map((prize, index) => ({
+      id: prize.id || `history-prize-${index}`,
+      title: prize.name || "未命名獎項",
+      meta: historyPrizeMeta(prize)
+    }));
   }
 
   if (rosterKey === "history_awards") {
-    return list.map((award) => `
-      <article class="roster-member">
-        <div>
-          <strong>${memberText(award.final_member_no, award.final_role_name)}</strong>
-          <p>${escapeHtml(historyAwardMeta(award))}</p>
-        </div>
-      </article>
-    `).join("");
+    return list.map((award, index) => ({
+      id: award.id || `history-award-${index}`,
+      title: memberPlainText(award.final_member_no, award.final_role_name),
+      meta: historyAwardMeta(award)
+    }));
   }
 
   if (rosterKey === "history_draws") {
-    return list.map((draw) => `
-      <article class="roster-member">
-        <div>
-          <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
-          <p>${escapeHtml(historyDrawMeta(draw))}</p>
-        </div>
-      </article>
-    `).join("");
+    return list.map((draw, index) => ({
+      id: draw.id || `history-draw-${index}`,
+      title: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
+      meta: historyDrawMeta(draw)
+    }));
   }
 
-  return list.map((member) => `
-    <article class="roster-member">
-      <div>
-        <strong>${memberText(member.member_no, member.role_name)}</strong>
-        <p>${escapeHtml(statMemberMeta(member) || "沒有額外資訊")}</p>
-      </div>
-    </article>
-  `).join("");
+  return list.map((member, index) => ({
+    id: member.member_no || `${rosterKey}-${index}`,
+    title: memberPlainText(member.member_no, member.role_name),
+    meta: statMemberMeta(member) || "沒有額外資訊"
+  }));
 }
 
 function historyPrizeMeta(prize) {
@@ -1436,66 +1493,58 @@ function statReasonText(reason) {
 
 function renderPendingDraw() {
   const pendingDraws = sortDrawRows(state.event.pending_draws || []);
-  const card = $("#pending-card");
-  const list = $("#pending-list");
-  const moreButton = $("#pending-show-more");
-  const moreLabel = $("#pending-show-more-label");
   const visibleCount = Math.min(state.pendingVisibleCount, pendingDraws.length);
   const visibleDraws = pendingDraws.slice(0, visibleCount);
   const hiddenCount = Math.max(pendingDraws.length - visibleCount, 0);
 
-  card.hidden = pendingDraws.length === 0;
-  list.innerHTML = "";
-  $("#pending-count").textContent = hiddenCount > 0 ? `${pendingDraws.length} 筆，顯示 ${visibleCount}` : `${pendingDraws.length} 筆`;
-  moreButton.hidden = hiddenCount === 0;
-  moreLabel.textContent = hiddenCount > 0 ? `顯示更多（剩 ${hiddenCount} 筆）` : "顯示更多";
-
-  if (pendingDraws.length === 0) return;
-
-  visibleDraws.forEach((pending) => {
-    const item = document.createElement("section");
-    item.className = "pending-item";
-    item.dataset.drawId = pending.id;
-    item.innerHTML = `
-      <div class="pending-summary">
-        <div>
-          <h4>${escapeHtml(pending.role_name)}（${escapeHtml(pending.member_no)}）</h4>
-          <p class="description">${escapeHtml([
-            pending.prize_name,
-            `提供者：${pending.provider}`,
-            `職業：${pending.occupation || "未填"}`,
-            `DC：${pending.joined_dc ? "已加入" : "未加入"}`
-          ].join(" / "))}</p>
-        </div>
-      </div>
-      <div class="button-row">
-        <button class="btn primary pending-primary-action" type="button" data-pending-action="accept" data-draw-id="${escapeHtml(pending.id)}">
-          <i data-lucide="check"></i>
-          <span>確認得獎</span>
-        </button>
-        <button class="btn secondary" type="button" data-pending-action="decline" data-draw-id="${escapeHtml(pending.id)}">
-          <i data-lucide="rotate-ccw"></i>
-          <span>放棄並重抽</span>
-        </button>
-      </div>
-      <form class="transfer-form" data-transfer-form data-draw-id="${escapeHtml(pending.id)}">
-        <label>
-          <span>指定轉讓給成員</span>
-          <select name="member_no" data-transfer-select>
-            <option value="">選擇轉讓對象</option>
-          </select>
-        </label>
-        <label>
-          <span>備註</span>
-          <input name="note" autocomplete="off" placeholder="">
-        </label>
-      </form>
-      <div class="pending-transfer-notice" data-transfer-notice hidden></div>
-    `;
-    list.appendChild(item);
+  renderPendingDrawCard({
+    pendingDraws,
+    visibleDraws,
+    visibleCount,
+    hiddenCount
   });
-  populateTransferMemberSelect();
-  refreshIcons();
+}
+
+function renderPendingDrawCard({ pendingDraws, visibleDraws, visibleCount, hiddenCount }) {
+  const transferPlaceholder = state.transferCandidatesLoading
+    ? "載入可轉讓名單中"
+    : state.transferCandidates.length === 0
+      ? "沒有可轉讓成員"
+      : "選擇轉讓對象";
+
+  return Boolean(window.ROOC_VUE_PENDING_CARD?.render?.({
+    targetSelector: "#pending-card",
+    hidden: pendingDraws.length === 0,
+    rows: buildPendingDrawRows(visibleDraws),
+    totalCount: pendingDraws.length,
+    visibleCount,
+    hiddenCount,
+    transferOptions: state.transferCandidates.map((member) => ({
+      value: member.member_no,
+      label: memberOptionLabel(member)
+    })),
+    transferPlaceholder,
+    transferDisabled: state.transferCandidatesLoading || state.transferCandidates.length === 0,
+    onShowMore: showMorePendingDraws,
+    onTransferStateChange: refreshIcons,
+    onRendered: () => {
+      populateTransferMemberSelect();
+      refreshIcons();
+    }
+  }));
+}
+
+function buildPendingDrawRows(draws) {
+  return draws.map((pending) => ({
+    id: pending.id,
+    title: `${pending.role_name || ""}（${pending.member_no || ""}）`,
+    description: [
+      pending.prize_name,
+      `提供者：${pending.provider || ""}`,
+      `職業：${pending.occupation || "未填"}`,
+      `DC：${pending.joined_dc ? "已加入" : "未加入"}`
+    ].join(" / ")
+  }));
 }
 
 function showMorePendingDraws() {
@@ -1508,41 +1557,15 @@ function renderPrizeTable() {
 }
 
 function renderPrizeRows(selector, prizes, emptyMessage, options = {}) {
-  const body = $(selector);
-  body.innerHTML = "";
+  const rows = asArray(prizes);
   const columnCount = options.actions ? 6 : 5;
 
-  if (prizes.length === 0) {
-    appendEmptyRow(body, columnCount, emptyMessage);
-    return;
-  }
-
-  prizes.forEach((prize) => {
-    const row = document.createElement("tr");
-    const canAdjust = options.actions && state.event?.status === "live";
-    const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
-    const anyDrawCount = Number(prize.draw_count ?? drawCount);
-    const canDelete = options.actions && state.event?.status === "live" && anyDrawCount === 0;
-    row.innerHTML = `
-      <td>${escapeHtml(prize.name)}</td>
-      <td>${escapeHtml(prize.provider)}</td>
-      <td>${escapeHtml(prize.quantity)}</td>
-      <td>${escapeHtml(prize.filled_count)}</td>
-      <td>${escapeHtml(prize.remaining_count)}</td>
-      ${options.actions ? `
-        <td class="table-actions-cell">
-          <button class="btn table-action" type="button" data-prize-action="bonus" data-prize-id="${escapeHtml(prize.id)}" ${canAdjust ? "" : "disabled"}>
-            <i data-lucide="sliders-horizontal"></i>
-            <span>調整</span>
-          </button>
-          <button class="btn table-action danger-action" type="button" data-prize-action="delete" data-prize-id="${escapeHtml(prize.id)}" ${canDelete ? "" : "disabled"}>
-            <i data-lucide="trash-2"></i>
-            <span>刪除</span>
-          </button>
-        </td>
-      ` : ""}
-    `;
-    body.appendChild(row);
+  renderAdminTable({
+    targetSelector: selector,
+    kind: "prizes",
+    rows: buildAdminPrizeTableRows(rows, options),
+    emptyMessage,
+    colspan: columnCount
   });
 }
 
@@ -1599,29 +1622,27 @@ async function deletePrize(prizeId) {
 }
 
 function renderAwards() {
-  renderAwardRows("#award-table", state.event.awards, "尚未有中獎紀錄。");
+  renderAwardRows("#award-table", state.event.awards, "尚未有中獎紀錄。", {
+    limit: AWARD_RENDER_LIMIT
+  });
 }
 
-function renderAwardRows(selector, awards, emptyMessage) {
-  const body = $(selector);
-  body.innerHTML = "";
+function renderAwardRows(selector, awards, emptyMessage, options = {}) {
+  const allRows = asArray(awards);
+  const limit = Number(options.limit || 0);
+  const visibleRows = limit > 0 ? allRows.slice(0, limit) : allRows;
+  const hiddenCount = Math.max(allRows.length - visibleRows.length, 0);
+  const footerMessage = hiddenCount > 0
+    ? `僅顯示最近 ${visibleRows.length} 筆，另有 ${hiddenCount} 筆可用 Excel 匯出查看。`
+    : "";
 
-  if (awards.length === 0) {
-    appendEmptyRow(body, 6, emptyMessage);
-    return;
-  }
-
-  awards.forEach((award) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(award.prize_name)}</td>
-      <td>${escapeHtml(award.provider)}</td>
-      <td>${memberText(award.drawn_member_no, award.drawn_role_name)}</td>
-      <td>${memberText(award.final_member_no, award.final_role_name)}</td>
-      <td>${escapeHtml(drawStatusText[award.status] || award.status)}</td>
-      <td>${escapeHtml(formatDate(award.resolved_at))}</td>
-    `;
-    body.appendChild(row);
+  renderAdminTable({
+    targetSelector: selector,
+    kind: "awards",
+    rows: buildAdminAwardTableRows(visibleRows),
+    emptyMessage,
+    footerMessage,
+    colspan: 6
   });
 }
 
@@ -1632,40 +1653,70 @@ function renderDrawLog() {
 }
 
 function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "", options = {}) {
-  const body = $(selector);
-  body.innerHTML = "";
   const allDraws = asArray(draws);
   const limit = Number(options.limit || 0);
   const visibleDraws = limit > 0 ? allDraws.slice(0, limit) : allDraws;
   const hiddenCount = Math.max(allDraws.length - visibleDraws.length, 0);
+  const footerMessage = hiddenCount > 0
+    ? `僅顯示最近 ${visibleDraws.length} 筆，另有 ${hiddenCount} 筆可用 Excel 匯出查看。`
+    : "";
 
-  if (allDraws.length === 0) {
-    appendEmptyRow(body, 6, emptyMessage);
-    return;
-  }
-
-  visibleDraws.forEach((draw) => {
-    const row = document.createElement("tr");
-    const verifyUrl = buildPublicVerifyUrl(eventSlug, draw.id);
-    row.innerHTML = `
-      <td>${escapeHtml(draw.prize_name)}</td>
-      <td>${escapeHtml(draw.provider || "")}</td>
-      <td>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</td>
-      <td>${escapeHtml(drawLogResultText(draw))}</td>
-      <td>${escapeHtml(formatPercent(draw.step_probability))}</td>
-      <td>
-        <a class="btn table-action" href="${escapeHtml(verifyUrl)}" target="_blank" rel="noopener">
-          <i data-lucide="shield-check"></i>
-          <span>驗證</span>
-        </a>
-      </td>
-    `;
-    body.appendChild(row);
+  renderAdminTable({
+    targetSelector: selector,
+    kind: "draws",
+    rows: buildAdminDrawTableRows(visibleDraws, eventSlug),
+    emptyMessage,
+    footerMessage,
+    colspan: 6
   });
+}
 
-  if (hiddenCount > 0) {
-    appendEmptyRow(body, 6, `僅顯示最近 ${visibleDraws.length} 筆，另有 ${hiddenCount} 筆可用 Excel 匯出查看。`);
-  }
+function renderAdminTable(payload = {}) {
+  return Boolean(window.ROOC_VUE_ADMIN_TABLES?.render?.(payload));
+}
+
+function buildAdminPrizeTableRows(prizes, options = {}) {
+  return prizes.map((prize, index) => {
+    const drawCount = Number(prize.filled_count || 0) + Number(prize.pending_count || 0);
+    const anyDrawCount = Number(prize.draw_count ?? drawCount);
+    const showActions = Boolean(options.actions);
+
+    return {
+      id: prize.id || `admin-prize-row-${index}`,
+      name: prize.name || "",
+      provider: prize.provider || "",
+      quantity: prize.quantity ?? "",
+      filledCount: prize.filled_count ?? "",
+      remainingCount: prize.remaining_count ?? "",
+      showActions,
+      canAdjust: showActions && state.event?.status === "live",
+      canDelete: showActions && state.event?.status === "live" && anyDrawCount === 0
+    };
+  });
+}
+
+function buildAdminAwardTableRows(awards) {
+  return awards.map((award, index) => ({
+    id: award.id || `admin-award-row-${index}`,
+    prizeName: award.prize_name || "",
+    provider: award.provider || "",
+    drawnMember: memberPlainText(award.drawn_member_no, award.drawn_role_name),
+    finalMember: memberPlainText(award.final_member_no, award.final_role_name),
+    status: drawStatusText[award.status] || award.status || "",
+    resolvedAt: formatDate(award.resolved_at)
+  }));
+}
+
+function buildAdminDrawTableRows(draws, eventSlug = "") {
+  return draws.map((draw, index) => ({
+    id: draw.id || `admin-draw-row-${index}`,
+    prizeName: draw.prize_name || "",
+    provider: draw.provider || "",
+    drawnMember: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
+    result: drawLogResultText(draw),
+    probability: formatPercent(draw.step_probability),
+    verifyUrl: buildPublicVerifyUrl(eventSlug, draw.id)
+  }));
 }
 
 function drawLogResultText(draw) {
@@ -1827,13 +1878,18 @@ async function finishLiveDraw(liveId, status, drawRows = [], errorMessage = "") 
   }
 }
 
+function renderDrawReveal(payload = {}) {
+  return Boolean(window.ROOC_VUE_DRAW_REVEAL?.render?.({
+    targetSelector: "#draw-animation-reveal-content",
+    resultListId: "draw-animation-results",
+    flipListId: "draw-animation-flip-results",
+    ...payload
+  }));
+}
+
 function openDrawAnimation(context) {
   const dialog = $("#draw-animation-dialog");
-  const phase = $("#draw-animation-phase");
-  const prize = $("#draw-animation-prize");
   const roller = $("#draw-animation-roller");
-  const results = $("#draw-animation-results");
-  const flipResults = $("#draw-animation-flip-results");
   const mode = context.visualMode || "classic";
   const revealMode = context.revealMode || "roller";
   const isFlipReveal = revealMode === "flip";
@@ -1847,11 +1903,15 @@ function openDrawAnimation(context) {
   dialog.classList.remove("is-revealed", "has-multiple-results", "has-flip-results");
   dialog.classList.add(`mode-${mode}`);
   dialog.classList.add(`reveal-${revealMode}`);
-  phase.textContent = window.ROOC_DRAW_ANIMATION.phaseText(mode, context.drawCount, revealMode);
-  prize.textContent = context.prizeName;
-  results.innerHTML = "";
-  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(context.drawCount));
-  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipPlaceholders(context.drawCount, escapeHtml) : "";
+  setText("#draw-animation-phase", window.ROOC_DRAW_ANIMATION.phaseText(mode, context.drawCount, revealMode));
+  setText("#draw-animation-prize", context.prizeName);
+  renderDrawReveal({
+    labels: [],
+    rows: [],
+    placeholderCount: isFlipReveal ? context.drawCount : 0,
+    prizeName: context.prizeName,
+    revealMode
+  });
   state.drawAnimationMode = mode;
 
   drawAnimationState.labels = buildDrawRollerLabels();
@@ -1874,10 +1934,7 @@ function openDrawAnimation(context) {
 
 async function revealDrawAnimationResults(rows, context) {
   const dialog = $("#draw-animation-dialog");
-  const phase = $("#draw-animation-phase");
   const roller = $("#draw-animation-roller");
-  const results = $("#draw-animation-results");
-  const flipResults = $("#draw-animation-flip-results");
   const labels = rows.map(drawResultLabel).filter(Boolean);
   const hasMultipleResults = labels.length > 1;
   const revealMode = context.revealMode || "roller";
@@ -1887,13 +1944,15 @@ async function revealDrawAnimationResults(rows, context) {
   dialog.classList.add("is-revealed");
   dialog.classList.toggle("has-multiple-results", hasMultipleResults);
   dialog.classList.toggle("has-flip-results", isFlipReveal);
-  phase.textContent = isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者");
+  setText("#draw-animation-phase", isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者"));
   roller.textContent = isFlipReveal || hasMultipleResults ? "" : (labels[0] || context.prizeName);
-  results.innerHTML = (!isFlipReveal && hasMultipleResults ? labels : [])
-    .map((label, index) => `<div class="draw-result-item" style="animation-delay: ${index * 0.06}s">${escapeHtml(label)}</div>`)
-    .join("");
-  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipCards(rows, context, escapeHtml) : "";
-  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(rows.length));
+  renderDrawReveal({
+    labels: !isFlipReveal && hasMultipleResults ? labels : [],
+    rows: isFlipReveal ? rows : [],
+    placeholderCount: 0,
+    prizeName: context.prizeName,
+    revealMode
+  });
 
   launchDrawFireworks(labels.length || context.drawCount);
   launchDrawConfetti(labels.length || context.drawCount);
@@ -2090,39 +2149,6 @@ function handleClearPendingTransfer(event) {
 
 function updatePendingPrimaryAction(item) {
   if (!item) return;
-
-  const select = item.querySelector("[data-transfer-select]");
-  const button = item.querySelector(".pending-primary-action");
-  if (!select || !button) return;
-
-  const hasTransferTarget = Boolean(select.value);
-  const label = button.querySelector("span");
-  const icon = button.querySelector("i");
-  const notice = item.querySelector("[data-transfer-notice]");
-  const transferLabel = select.selectedOptions[0]?.textContent || "";
-
-  item.classList.toggle("has-transfer-target", hasTransferTarget);
-  if (notice) {
-    notice.hidden = !hasTransferTarget;
-    notice.innerHTML = hasTransferTarget
-      ? `
-        <span>將指定轉讓給 ${escapeHtml(transferLabel)}，請按「指定轉讓」完成處理。</span>
-        <button class="btn secondary pending-clear-transfer" type="button" data-clear-transfer>
-          <i data-lucide="x"></i>
-          <span>取消轉讓</span>
-        </button>
-      `
-      : "";
-  }
-  button.classList.toggle("primary", !hasTransferTarget);
-  button.classList.toggle("accent", hasTransferTarget);
-  button.dataset.pendingAction = "accept";
-  if (label) {
-    label.textContent = hasTransferTarget ? "指定轉讓" : "確認得獎";
-  }
-  if (icon) {
-    icon.setAttribute("data-lucide", hasTransferTarget ? "move-right" : "check");
-  }
   refreshIcons();
 }
 
@@ -2211,7 +2237,7 @@ function clearLoadedEvent() {
   state.event = null;
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
-  $("#console-status").textContent = "未載入";
+  setText("#console-status", "未載入");
   $("#event-title-select").value = "";
   syncEnhancedSelect($("#event-title-select"));
   state.eventSlugHint = "";
@@ -2317,9 +2343,9 @@ function openAdminPinDialog(mode) {
   const isRequired = Boolean(state.adminPinRequired);
   const canReturnPublic = isLogin && isRequired;
 
-  $("#admin-pin-title").textContent = isChange ? "修改管理密碼" : isLogin ? "後台登入" : "管理密碼";
-  $("#admin-pin-label").textContent = isLogin ? "輸入管理密碼" : "首次設定或驗證管理密碼";
-  $("#admin-pin-submit-label").textContent = isLogin ? "登入" : "確認";
+  setText("#admin-pin-title", isChange ? "修改管理密碼" : isLogin ? "後台登入" : "管理密碼");
+  setText("#admin-pin-label", isLogin ? "輸入管理密碼" : "首次設定或驗證管理密碼");
+  setText("#admin-pin-submit-label", isLogin ? "登入" : "確認");
   $("#cancel-admin-pin").hidden = isRequired && !canReturnPublic;
   $("#cancel-admin-pin").setAttribute("aria-label", canReturnPublic ? "返回公開驗證" : "取消管理密碼驗證");
   $("#dismiss-admin-pin").hidden = isRequired;
@@ -2431,37 +2457,15 @@ async function loadOccupations() {
 }
 
 function renderOccupations() {
-  const body = $("#occupation-table");
-  body.innerHTML = "";
-
-  if (state.occupations.length === 0) {
-    appendEmptyRow(body, 3, "尚未建立職業。");
-    return;
-  }
-
-  state.occupations.forEach((occupation) => {
-    const activeLabel = occupation.is_active ? "啟用中" : "已停用";
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(occupation.name)}</td>
-      <td><span class="table-badge ${occupation.is_active ? "is-on" : "is-off"}">${activeLabel}</span></td>
-      <td>
-        <button class="btn table-action" type="button" data-edit-occupation="${escapeHtml(occupation.name)}" data-active="${occupation.is_active ? "1" : "0"}">
-          編輯
-        </button>
-        <button class="btn table-action" type="button" data-toggle-occupation="${escapeHtml(occupation.name)}" data-active="${occupation.is_active ? "0" : "1"}">
-          ${occupation.is_active ? "停用" : "啟用"}
-        </button>
-      </td>
-    `;
-    body.appendChild(row);
-  });
-
-  $all("[data-edit-occupation]").forEach((button) => {
-    button.addEventListener("click", () => editOccupation(button.dataset.editOccupation, button.dataset.active === "1"));
-  });
-  $all("[data-toggle-occupation]").forEach((button) => {
-    button.addEventListener("click", () => toggleOccupation(button.dataset.toggleOccupation, button.dataset.active === "1"));
+  window.ROOC_VUE_OCCUPATION_TABLE?.render?.({
+    targetSelector: "#occupation-table",
+    rows: state.occupations.map((occupation) => ({
+      name: occupation.name,
+      isActive: Boolean(occupation.is_active)
+    })),
+    emptyMessage: "尚未建立職業。",
+    onEdit: editOccupation,
+    onToggle: toggleOccupation
   });
 }
 
@@ -2473,21 +2477,28 @@ function renderOccupationOptions() {
 
 function populateOccupationSelect(select, current = "") {
   if (!select) return;
-  select.innerHTML = "";
-  select.append(new Option("未設定", ""));
-
-  state.occupations
+  const options = state.occupations
     .filter((occupation) => occupation.is_active)
-    .forEach((occupation) => {
-      select.append(new Option(occupation.name, occupation.name));
+    .map((occupation) => ({
+      value: occupation.name,
+      label: occupation.name
+    }));
+  const hasCurrentOccupation = current && state.occupations.some((occupation) => occupation.name === current);
+  if (hasCurrentOccupation && !options.some((option) => option.value === current)) {
+    options.push({
+      value: current,
+      label: `${current}（已停用）`
     });
-
-  if (current && state.occupations.some((occupation) => occupation.name === current)) {
-    if (!Array.from(select.options).some((option) => option.value === current)) {
-      select.append(new Option(`${current}（已停用）`, current));
-    }
-    select.value = current;
   }
+
+  if (!select.id) return;
+  window.ROOC_VUE_SELECT_OPTIONS?.render?.({
+    targetSelector: `#${select.id}`,
+    placeholder: "未設定",
+    options,
+    value: current,
+    disabled: false
+  });
 }
 
 function editOccupation(name, isActive) {
@@ -2501,10 +2512,10 @@ function editOccupation(name, isActive) {
 
 function renderOccupationEditState(name = "") {
   const isEditing = Boolean(name);
-  $("#occupation-form-mode").textContent = isEditing ? "編輯職業" : "新增職業";
-  $("#occupation-edit-label").textContent = isEditing ? `正在編輯：${name}` : "建立新的職業選項";
-  $("#occupation-edit-badge").textContent = isEditing ? "編輯中" : "新增";
-  $("#occupation-submit-label").textContent = isEditing ? "儲存修改" : "新增職業";
+  setText("#occupation-form-mode", isEditing ? "編輯職業" : "新增職業");
+  setText("#occupation-edit-label", isEditing ? `正在編輯：${name}` : "建立新的職業選項");
+  setText("#occupation-edit-badge", isEditing ? "編輯中" : "新增");
+  setText("#occupation-submit-label", isEditing ? "儲存修改" : "新增職業");
   const icon = $("#occupation-form button[type='submit'] i");
   if (icon) {
     icon.dataset.lucide = isEditing ? "save" : "plus";
@@ -2656,41 +2667,22 @@ function sortMembersBy(key) {
 }
 
 function renderMembers() {
-  const body = $("#member-table");
-  body.innerHTML = "";
-  $("#member-status").textContent = `${state.members.length} 筆`;
+  setText("#member-status", `${state.members.length} 筆`);
   renderMemberSortButtons();
+  const sortedMembers = getSortedMembers();
 
-  if (state.members.length === 0) {
-    appendEmptyRow(body, 6, "沒有符合條件的成員。");
-    return;
-  }
-
-  getSortedMembers().forEach((member) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(member.member_no)}</td>
-      <td>${escapeHtml(member.role_name || "")}</td>
-      <td>${escapeHtml(member.occupation || "")}</td>
-      <td>${member.joined_dc ? "是" : "否"}</td>
-      <td><span class="table-badge ${member.is_active ? "is-on" : "is-off"}">${member.is_active ? "公會中" : "已退會"}</span></td>
-      <td>
-        <button class="btn table-action" type="button" data-edit-member="${escapeHtml(member.member_no)}">
-          編輯
-        </button>
-        <button class="btn table-action" type="button" data-toggle-member="${escapeHtml(member.member_no)}" data-active="${member.is_active ? "0" : "1"}">
-          ${member.is_active ? "標記退會" : "恢復公會中"}
-        </button>
-      </td>
-    `;
-    body.appendChild(row);
-  });
-
-  $all("[data-edit-member]").forEach((button) => {
-    button.addEventListener("click", () => editMember(button.dataset.editMember));
-  });
-  $all("[data-toggle-member]").forEach((button) => {
-    button.addEventListener("click", () => toggleMember(button.dataset.toggleMember, button.dataset.active === "1"));
+  window.ROOC_VUE_MEMBER_TABLE?.render?.({
+    targetSelector: "#member-table",
+    rows: sortedMembers.map((member) => ({
+      memberNo: member.member_no,
+      roleName: member.role_name || "",
+      occupation: member.occupation || "",
+      joinedDc: Boolean(member.joined_dc),
+      isActive: Boolean(member.is_active)
+    })),
+    emptyMessage: "沒有符合條件的成員。",
+    onEdit: editMember,
+    onToggle: toggleMember
   });
 }
 
@@ -2723,17 +2715,17 @@ function memberSortText(value) {
 }
 
 function renderMemberSortButtons() {
-  $all("[data-member-sort]").forEach((button) => {
-    const isActive = button.dataset.memberSort === state.memberSort.key;
-    const icon = isActive
-      ? (state.memberSort.direction === "asc" ? "arrow-up" : "arrow-down")
-      : "arrow-up-down";
+  renderMemberSortHead();
+}
 
-    button.classList.toggle("is-active", isActive);
-    button.setAttribute("aria-pressed", String(isActive));
-    button.querySelector("[data-member-sort-icon]").innerHTML = `<i data-lucide="${icon}"></i>`;
-  });
-  refreshIcons();
+function renderMemberSortHead() {
+  return Boolean(window.ROOC_VUE_MEMBER_SORT_HEAD?.render?.({
+    targetSelector: "#member-table-head",
+    sortKey: state.memberSort.key,
+    direction: state.memberSort.direction,
+    onSort: sortMembersBy,
+    onRendered: refreshIcons
+  }));
 }
 
 async function openMemberCreateDialog() {
@@ -2820,7 +2812,7 @@ function resetMemberImportDialog(options = {}) {
   state.memberImportRawRows = [];
   state.memberImportRows = [];
   state.memberImportExisting = new Map();
-  $("#member-import-table").innerHTML = "";
+  renderMemberImportTable([]);
   $("#member-import-summary").hidden = true;
   $("#member-import-preview").hidden = true;
   $("#confirm-member-import").disabled = true;
@@ -2973,40 +2965,44 @@ function renderMemberImportSummary(rows = state.memberImportRows) {
   const errorRows = rows.filter((row) => row.errors.length > 0);
   const newOccupations = getMemberImportNewOccupations(validRows);
 
-  summary.hidden = rows.length === 0;
+  window.ROOC_VUE_MEMBER_IMPORT_SUMMARY?.render?.({
+    targetSelector: "#member-import-summary",
+    hidden: rows.length === 0,
+    totalCount: rows.length,
+    validCount: validRows.length,
+    errorCount: errorRows.length,
+    newOccupationCount: newOccupations.length
+  });
   preview.hidden = rows.length === 0;
-  $("#member-import-total").textContent = `${rows.length} 筆`;
-  $("#member-import-valid").textContent = `${validRows.length} 筆可匯入`;
-  $("#member-import-error").textContent = `${errorRows.length} 筆錯誤`;
-  $("#member-import-occupation").textContent = `${newOccupations.length} 個新職業`;
   $("#confirm-member-import").disabled = validRows.length === 0;
 }
 
 function renderMemberImportTable(rows = state.memberImportRows) {
-  const body = $("#member-import-table");
-  body.innerHTML = "";
+  window.ROOC_VUE_MEMBER_IMPORT_TABLE?.render?.({
+    targetSelector: "#member-import-table",
+    rows: buildMemberImportTableRows(rows),
+    emptyMessage: "尚未選擇檔案。"
+  });
+}
 
-  if (rows.length === 0) {
-    appendEmptyRow(body, 7, "尚未選擇檔案。");
-    return;
-  }
-
-  rows.forEach((row) => {
-    const rowElement = document.createElement("tr");
+function buildMemberImportTableRows(rows = state.memberImportRows) {
+  return rows.map((row) => {
     const status = memberImportStatus(row);
     const note = row.importMessage || row.errors.join("、") || (row.newOccupation ? "將建立職業" : "");
-    rowElement.classList.toggle("import-row-error", row.errors.length > 0 || row.importStatus === "failed");
-    rowElement.classList.toggle("import-row-done", row.importStatus === "done");
-    rowElement.innerHTML = `
-      <td><span class="table-badge ${status.className}">${status.label}</span></td>
-      <td>${escapeHtml(row.member_no)}</td>
-      <td>${escapeHtml(row.role_name)}</td>
-      <td>${escapeHtml(row.occupation || "")}</td>
-      <td>${row.joined_dc ? "是" : "否"}</td>
-      <td>${row.is_active ? "公會中" : "已退會"}</td>
-      <td>${escapeHtml(note)}</td>
-    `;
-    body.appendChild(rowElement);
+
+    return {
+      key: `${row.rowNumber}-${row.member_no || ""}`,
+      memberNo: row.member_no,
+      roleName: row.role_name,
+      occupation: row.occupation || "",
+      joinedDc: Boolean(row.joined_dc),
+      isActive: Boolean(row.is_active),
+      statusLabel: status.label,
+      statusClass: status.className,
+      note,
+      hasError: row.errors.length > 0 || row.importStatus === "failed",
+      isDone: row.importStatus === "done"
+    };
   });
 }
 
@@ -3435,18 +3431,18 @@ function requestConfirmDialog(options = {}) {
   });
   state.confirmPrompt.promise = promise;
 
-  $("#confirm-dialog-title").textContent = options.title || "確認操作";
-  $("#confirm-dialog-message").textContent = options.message || "確定要繼續嗎？";
-  const acceptButton = $("#confirm-dialog-accept");
-  const acceptIcon = acceptButton.querySelector("i");
-  $("#confirm-dialog-accept-label").textContent = options.confirmLabel || "確認";
-  acceptButton.classList.remove("primary", "accent", "danger", "secondary");
-  acceptButton.classList.add(options.confirmKind || "danger");
-  acceptIcon?.setAttribute("data-lucide", options.confirmIcon || "check");
+  window.ROOC_VUE_CONFIRM_DIALOG?.render?.({
+    targetSelector: "#confirm-dialog-content",
+    title: options.title || "確認操作",
+    message: options.message || "確定要繼續嗎？",
+    confirmLabel: options.confirmLabel || "確認",
+    confirmKind: options.confirmKind || "danger",
+    confirmIcon: options.confirmIcon || "check",
+    onAccept: () => closeConfirmDialog(true),
+    onCancel: () => closeConfirmDialog(false),
+    onRendered: () => window.setTimeout(() => document.querySelector("#confirm-dialog-content [data-confirm-cancel]")?.focus(), 0)
+  });
   showModalDialog($("#confirm-dialog"));
-  refreshIcons();
-  window.setTimeout(() => $("#confirm-dialog-cancel").focus(), 0);
-
   return promise;
 }
 
@@ -3519,16 +3515,7 @@ function getActiveDialog() {
 
 function showToast(message, type = "info", options = {}) {
   syncToastStackLayer();
-  const stack = $("#toast-stack");
-  const toast = buildToast(message, type, options);
-  stack.appendChild(toast);
-  refreshIcons();
-
-  if (!options.persist) {
-    window.setTimeout(() => dismissToast(toast), options.duration || 4600);
-  }
-
-  return toast;
+  return window.ROOC_VUE_TOASTS?.show?.(message, type, options) || null;
 }
 
 function confirmToast(message, options = {}) {
@@ -3563,72 +3550,8 @@ function confirmToast(message, options = {}) {
   });
 }
 
-function buildToast(message, type, options) {
-  const toast = document.createElement("article");
-  toast.className = "toast";
-  toast.dataset.type = type;
-  toast.setAttribute("role", type === "error" ? "alert" : "status");
-
-  const icon = document.createElement("i");
-  icon.dataset.lucide = toastIcon(type);
-  toast.appendChild(icon);
-
-  const content = document.createElement("div");
-  content.className = "toast-content";
-  content.textContent = message;
-  toast.appendChild(content);
-
-  if (options.actions?.length) {
-    const actions = document.createElement("div");
-    actions.className = "toast-actions";
-    options.actions.forEach((action) => {
-      const button = document.createElement("button");
-      button.className = `toast-action ${action.kind || "secondary"}`;
-      button.type = "button";
-      button.textContent = action.label;
-      button.addEventListener("click", action.onClick);
-      actions.appendChild(button);
-    });
-    toast.appendChild(actions);
-  }
-
-  const dismiss = document.createElement("button");
-  dismiss.className = "toast-dismiss";
-  dismiss.type = "button";
-  dismiss.setAttribute("aria-label", "關閉提示");
-  dismiss.innerHTML = '<i data-lucide="x"></i>';
-  dismiss.addEventListener("click", () => dismissToast(toast));
-  toast.appendChild(dismiss);
-  toast.afterDismiss = options.onDismiss;
-
-  toast.addEventListener("transitionend", () => {
-    if (toast.dataset.dismissed === "true") {
-      finishToastDismiss(toast);
-    }
-  });
-
-  return toast;
-}
-
 function dismissToast(toast) {
-  if (!toast || toast.dataset.dismissed === "true") return;
-  toast.dataset.dismissed = "true";
-  toast.classList.add("is-dismissing");
-  window.setTimeout(() => finishToastDismiss(toast), 240);
-}
-
-function finishToastDismiss(toast) {
-  if (!toast || toast.dataset.finished === "true") return;
-  toast.dataset.finished = "true";
-  toast.remove();
-  toast.afterDismiss?.();
-}
-
-function toastIcon(type) {
-  if (type === "success") return "circle-check";
-  if (type === "error") return "circle-alert";
-  if (type === "warning") return "triangle-alert";
-  return "info";
+  window.ROOC_VUE_TOASTS?.dismiss?.(toast);
 }
 
 function cleanRequired(value, message) {
@@ -3677,11 +3600,6 @@ function memberPlainText(memberNo, displayName) {
   return `${label}${suffix}`;
 }
 
-function appendEmptyRow(body, colspan, message) {
-  const row = document.createElement("tr");
-  row.innerHTML = `<td colspan="${colspan}" class="empty-cell">${escapeHtml(message)}</td>`;
-  body.appendChild(row);
-}
 
 function formatDate(value) {
   if (!value) return "";
