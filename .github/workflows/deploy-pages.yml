@@ -26,19 +26,45 @@ jobs:
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          SUPABASE_TEST_URL: ${{ vars.SUPABASE_TEST_URL }}
+          SUPABASE_TEST_ANON_KEY: ${{ vars.SUPABASE_TEST_ANON_KEY }}
+          SUPABASE_TEST_LABEL: ${{ vars.SUPABASE_TEST_LABEL }}
         run: |
           mkdir -p dist
-          cp index.html public.html styles.css app.js public.js config.js dist/
+          cp index.html public.html styles.css shared.js app.js public.js config.js dist/
           cp -R assets dist/assets
           touch dist/.nojekyll
           node <<'NODE'
           const fs = require('fs');
           const url = process.env.SUPABASE_URL || '';
           const anonKey = process.env.SUPABASE_ANON_KEY || '';
+          const testUrl = process.env.SUPABASE_TEST_URL || '';
+          const testAnonKey = process.env.SUPABASE_TEST_ANON_KEY || '';
+          const testLabel = process.env.SUPABASE_TEST_LABEL || '測試資料庫 rooc_test';
+          if ((testUrl && !testAnonKey) || (!testUrl && testAnonKey)) {
+            throw new Error('SUPABASE_TEST_URL and SUPABASE_TEST_ANON_KEY must be set together.');
+          }
           if (url && anonKey) {
+            const config = {
+              defaultEnvironment: 'production',
+              environments: {
+                production: {
+                  label: '正式資料庫',
+                  url,
+                  anonKey,
+                },
+              },
+            };
+            if (testUrl && testAnonKey) {
+              config.environments.rooc_test = {
+                label: testLabel,
+                url: testUrl,
+                anonKey: testAnonKey,
+              };
+            }
             fs.writeFileSync(
               'dist/config.js',
-              `window.ROOC_SUPABASE_CONFIG = ${JSON.stringify({ url, anonKey }, null, 2)};\n`
+              `window.ROOC_SUPABASE_CONFIG = ${JSON.stringify(config, null, 2)};\n`
             );
           }
           NODE

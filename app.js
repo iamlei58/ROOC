@@ -20,6 +20,7 @@ const PENDING_DRAW_PAGE_SIZE = 20;
 
 const state = {
   client: null,
+  environmentState: null,
   event: null,
   appAdminPin: "",
   adminPinPrompt: null,
@@ -163,10 +164,12 @@ function bindForms() {
   $("#close-event").addEventListener("click", () => setEventStatus("closed"));
   $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
   $("#delete-event").addEventListener("click", () => deleteLoadedEvent("console"));
-  $("#export-awards").addEventListener("click", exportAwardsCsv);
+  $("#export-awards").addEventListener("click", exportAwardsExcel);
+  $("#export-draw-log").addEventListener("click", exportDrawLogExcel);
   $("#history-event-form").addEventListener("submit", handleLoadHistoryEvent);
   $("#refresh-history-events").addEventListener("click", handleRefreshHistoryEvents);
-  $("#export-history-awards").addEventListener("click", exportHistoryAwardsCsv);
+  $("#export-history-awards").addEventListener("click", exportHistoryAwardsExcel);
+  $("#export-history-draw-log").addEventListener("click", exportHistoryDrawLogExcel);
   $("#delete-history-event").addEventListener("click", () => deleteLoadedEvent("history"));
   $("#change-admin-pin").addEventListener("click", openChangeAdminPinDialog);
   $("#logout-admin").addEventListener("click", handleAdminLogout);
@@ -244,10 +247,15 @@ function bindDialogBackdrops() {
 }
 
 function hydrateConfig() {
-  const runtime = window.ROOC_SUPABASE_CONFIG || {};
+  state.environmentState = resolveSupabaseEnvironment();
+  const runtime = state.environmentState.current || {};
   configureClient(runtime.url, runtime.anonKey);
+  bindEnvironmentSwitcher();
+  if (state.environmentState.requestedEnvironmentMissing) {
+    showToast(`找不到資料庫環境「${state.environmentState.requestedEnvironmentMissing}」，已改用預設設定。`, "warning");
+  }
   if (!state.client) {
-    showToast("Supabase 尚未設定。請設定 SUPABASE_URL 與 SUPABASE_ANON_KEY。", "error");
+    showToast(`「${getActiveEnvironmentLabel()}」Supabase 尚未設定。請設定對應的 URL 與 anon key。`, "error");
   }
 }
 
@@ -320,13 +328,23 @@ function configureClient(url, anonKey) {
 }
 
 function renderConnection(connected) {
-  $("#connection-pill").classList.toggle("is-connected", connected);
-  $("#connection-text").textContent = connected ? "Supabase 已連線" : "尚未連線";
+  const connectionPill = $("#connection-pill");
+  connectionPill.classList.toggle("is-connected", connected);
+  connectionPill.classList.toggle("is-test-environment", connected && state.environmentState && !state.environmentState.isDefault);
+  $("#connection-text").textContent = connected && state.environmentState && !state.environmentState.isDefault
+    ? `${getActiveEnvironmentLabel()} 已連線`
+    : connected ? "Supabase 已連線" : "尚未連線";
 }
 
 async function loadOptionalLocalConfig() {
+  if (window.ROOC_CONFIG?.loadOptionalLocalConfig) {
+    await window.ROOC_CONFIG.loadOptionalLocalConfig();
+    return;
+  }
+
   const runtime = window.ROOC_SUPABASE_CONFIG || {};
-  if (runtime.url && runtime.anonKey) return;
+  const productionRuntime = runtime.environments?.production || runtime;
+  if (productionRuntime.url && productionRuntime.anonKey) return;
 
   try {
     await loadScript("config.local.js");
@@ -343,6 +361,44 @@ function loadScript(src) {
     script.onerror = reject;
     document.head.appendChild(script);
   });
+}
+
+function resolveSupabaseEnvironment() {
+  if (window.ROOC_CONFIG?.resolveSupabaseEnvironment) {
+    return window.ROOC_CONFIG.resolveSupabaseEnvironment();
+  }
+
+  const runtime = window.ROOC_SUPABASE_CONFIG || {};
+  const productionRuntime = runtime.environments?.production || runtime;
+  return {
+    defaultEnvironment: "production",
+    environments: [
+      {
+        id: "production",
+        label: "正式資料庫",
+        url: productionRuntime.url,
+        anonKey: productionRuntime.anonKey
+      }
+    ],
+    current: {
+      id: "production",
+      label: "正式資料庫",
+      url: productionRuntime.url,
+      anonKey: productionRuntime.anonKey
+    },
+    isDefault: true,
+    requestedEnvironmentMissing: ""
+  };
+}
+
+function bindEnvironmentSwitcher() {
+  if (window.ROOC_CONFIG?.mountEnvironmentSwitcher && state.environmentState) {
+    window.ROOC_CONFIG.mountEnvironmentSwitcher(state.environmentState);
+  }
+}
+
+function getActiveEnvironmentLabel() {
+  return state.environmentState?.current?.label || "正式資料庫";
 }
 
 function readLocalValue(key) {
@@ -1615,6 +1671,9 @@ function buildPublicVerifyUrl(eventSlug, drawId = "") {
   const url = new URL("public.html", window.location.href);
   if (eventSlug) url.searchParams.set("event", eventSlug);
   if (drawId) url.searchParams.set("draw", drawId);
+  if (state.environmentState && !state.environmentState.isDefault) {
+    url.searchParams.set("env", state.environmentState.current.id);
+  }
   return `${url.pathname}${url.search}`;
 }
 
@@ -2841,6 +2900,10 @@ async function handleMemberImportFile(event) {
 }
 
 async function readMemberImportFile(file) {
+  if (!String(file?.name || "").toLowerCase().endsWith(".xlsx")) {
+    throw new Error("請選擇 .xlsx Excel 檔案。");
+  }
+
   if (!window.XLSX?.read || !window.XLSX?.utils?.sheet_to_json) {
     throw new Error("Excel 解析套件尚未載入，請重新整理頁面。");
   }
@@ -3080,10 +3143,21 @@ async function handleMemberImportSubmit(event) {
 }
 
 function downloadMemberImportTemplate() {
-  downloadCsv("rooc-members-template.csv", [
+  if (!canExportXlsx()) {
+    showToast("Excel 匯出套件尚未載入，請重新整理後再試。", "error");
+    return;
+  }
+
+  downloadXlsx("rooc-members-template.xlsx", "成員匯入範本", [
     ["編號", "角色名稱", "職業", "是否加入DC", "公會狀態"],
     ["M0001", "雞蛋糕", "神官", "是", "公會中"],
     ["M0002", "Nanami", "騎士", "否", "公會中"]
+  ], [
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 }
   ]);
 }
 
@@ -3143,7 +3217,7 @@ async function toggleMember(memberNo, isActive) {
   });
 }
 
-function exportAwardsCsv() {
+function exportAwardsExcel() {
   try {
     ensureEventLoaded();
   } catch (error) {
@@ -3151,27 +3225,52 @@ function exportAwardsCsv() {
     return;
   }
 
-  exportEventAwardsCsv(state.event);
+  exportEventAwardsExcel(state.event);
 }
 
-function exportHistoryAwardsCsv() {
+function exportHistoryAwardsExcel() {
   if (!state.historyEvent) {
     showToast("請先載入歷史活動。", "error");
     return;
   }
 
-  exportEventAwardsCsv(state.historyEvent);
+  exportEventAwardsExcel(state.historyEvent);
 }
 
-function exportEventAwardsCsv(event) {
+function exportDrawLogExcel() {
+  try {
+    ensureEventLoaded();
+  } catch (error) {
+    showToast(friendlyError(error.message), "error");
+    return;
+  }
+
+  exportEventDrawLogExcel(state.event);
+}
+
+function exportHistoryDrawLogExcel() {
+  if (!state.historyEvent) {
+    showToast("請先載入歷史活動。", "error");
+    return;
+  }
+
+  exportEventDrawLogExcel(state.historyEvent);
+}
+
+function exportEventAwardsExcel(event) {
   const rows = event.awards;
   if (rows.length === 0) {
     showToast("目前沒有中獎名單可匯出。", "error");
     return;
   }
 
+  if (!canExportXlsx()) {
+    showToast("Excel 匯出套件尚未載入，請重新整理後再試。", "error");
+    return;
+  }
+
   const headers = ["獎項", "提供者", "名額序", "原抽中編號", "原抽中名稱", "領獎編號", "領獎名稱", "狀態", "備註", "時間"];
-  const csvRows = rows.map((award) => [
+  const excelRows = rows.map((award) => [
     award.prize_name,
     award.provider,
     award.slot_number,
@@ -3184,25 +3283,90 @@ function exportEventAwardsCsv(event) {
     formatDate(award.resolved_at)
   ]);
 
-  downloadCsv(`${event.slug}-awards.csv`, [headers, ...csvRows]);
+  downloadXlsx(`${event.slug}-awards.xlsx`, "中獎名單", [headers, ...excelRows], [
+    { wch: 20 },
+    { wch: 18 },
+    { wch: 8 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 18 }
+  ]);
 }
 
-function downloadCsv(filename, rows) {
-  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
-  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+function exportEventDrawLogExcel(event) {
+  const rows = asArray(event.recent_draws);
+  if (rows.length === 0) {
+    showToast("目前沒有抽獎紀錄可匯出。", "error");
+    return;
+  }
+
+  if (!canExportXlsx()) {
+    showToast("Excel 匯出套件尚未載入，請重新整理後再試。", "error");
+    return;
+  }
+
+  const headers = [
+    "獎項",
+    "提供者",
+    "名額序",
+    "抽中編號",
+    "抽中名稱",
+    "領獎編號",
+    "領獎名稱",
+    "結果",
+    "單步機率",
+    "建立時間",
+    "處理時間",
+    "公開驗證連結"
+  ];
+  const excelRows = rows.map((draw) => [
+    draw.prize_name,
+    draw.provider,
+    draw.slot_number,
+    draw.drawn_member_no,
+    draw.drawn_role_name,
+    draw.final_member_no,
+    draw.final_role_name,
+    drawLogResultText(draw),
+    formatPercent(draw.step_probability),
+    formatDate(draw.created_at),
+    formatDate(draw.resolved_at),
+    buildPublicVerifyUrl(event.slug, draw.id)
+  ]);
+
+  downloadXlsx(`${event.slug}-draw-log.xlsx`, "抽獎紀錄", [headers, ...excelRows], [
+    { wch: 20 },
+    { wch: 18 },
+    { wch: 8 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 22 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 42 }
+  ]);
 }
 
-function csvCell(value) {
-  const text = String(value ?? "");
-  return `"${text.replace(/"/g, '""')}"`;
+function canExportXlsx() {
+  return Boolean(window.XLSX?.utils?.aoa_to_sheet && window.XLSX?.utils?.book_new && window.XLSX?.writeFile);
+}
+
+function downloadXlsx(filename, sheetName, rows, columns = []) {
+  const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+  if (columns.length > 0) {
+    worksheet["!cols"] = columns;
+  }
+
+  const workbook = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  window.XLSX.writeFile(workbook, filename);
 }
 
 async function rpc(name, args) {

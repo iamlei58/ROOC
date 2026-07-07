@@ -1,5 +1,6 @@
 const publicState = {
   client: null,
+  environmentState: null,
   events: [],
   event: null,
   pendingDrawId: "",
@@ -49,9 +50,20 @@ function $(selector) {
 function bindPublicPage() {
   $("#public-event-form").addEventListener("submit", handleLoadPublicEvent);
   $("#refresh-public-events").addEventListener("click", handleRefreshPublicEvents);
+  $("#public-detail").addEventListener("click", handlePublicRosterButtonClick);
   $("#public-draw-table").addEventListener("click", handleDrawVerifyClick);
+  $("#close-public-roster-dialog").addEventListener("click", closePublicRosterDialog);
   $("#close-audit-dialog").addEventListener("click", closeAuditDialog);
   $("#close-public-live").addEventListener("click", closePublicLiveDialog);
+
+  const rosterDialog = $("#public-roster-dialog");
+  rosterDialog.addEventListener("click", (event) => {
+    if (event.target === rosterDialog) closePublicRosterDialog();
+  });
+  rosterDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closePublicRosterDialog();
+  });
 
   const auditDialog = $("#audit-dialog");
   auditDialog.addEventListener("click", (event) => {
@@ -101,10 +113,15 @@ async function initializePublicPage() {
 }
 
 function hydrateConfig() {
-  const runtime = window.ROOC_SUPABASE_CONFIG || {};
+  publicState.environmentState = resolveSupabaseEnvironment();
+  const runtime = publicState.environmentState.current || {};
   configureClient(runtime.url, runtime.anonKey);
+  bindEnvironmentSwitcher();
+  if (publicState.environmentState.requestedEnvironmentMissing) {
+    showToast(`找不到資料庫環境「${publicState.environmentState.requestedEnvironmentMissing}」，已改用預設設定。`, "warning");
+  }
   if (!publicState.client) {
-    showToast("Supabase 尚未設定，無法載入公開驗證資料。", "error");
+    showToast(`「${getActiveEnvironmentLabel()}」Supabase 尚未設定，無法載入公開驗證資料。`, "error");
   }
 }
 
@@ -123,13 +140,23 @@ function configureClient(url, anonKey) {
 }
 
 function renderConnection(connected) {
-  $("#connection-pill").classList.toggle("is-connected", connected);
-  $("#connection-text").textContent = connected ? "Supabase 已連線" : "尚未連線";
+  const connectionPill = $("#connection-pill");
+  connectionPill.classList.toggle("is-connected", connected);
+  connectionPill.classList.toggle("is-test-environment", connected && publicState.environmentState && !publicState.environmentState.isDefault);
+  $("#connection-text").textContent = connected && publicState.environmentState && !publicState.environmentState.isDefault
+    ? `${getActiveEnvironmentLabel()} 已連線`
+    : connected ? "Supabase 已連線" : "尚未連線";
 }
 
 async function loadOptionalLocalConfig() {
+  if (window.ROOC_CONFIG?.loadOptionalLocalConfig) {
+    await window.ROOC_CONFIG.loadOptionalLocalConfig();
+    return;
+  }
+
   const runtime = window.ROOC_SUPABASE_CONFIG || {};
-  if (runtime.url && runtime.anonKey) return;
+  const productionRuntime = runtime.environments?.production || runtime;
+  if (productionRuntime.url && productionRuntime.anonKey) return;
 
   try {
     await loadScript("config.local.js");
@@ -146,6 +173,44 @@ function loadScript(src) {
     script.onerror = reject;
     document.head.appendChild(script);
   });
+}
+
+function resolveSupabaseEnvironment() {
+  if (window.ROOC_CONFIG?.resolveSupabaseEnvironment) {
+    return window.ROOC_CONFIG.resolveSupabaseEnvironment();
+  }
+
+  const runtime = window.ROOC_SUPABASE_CONFIG || {};
+  const productionRuntime = runtime.environments?.production || runtime;
+  return {
+    defaultEnvironment: "production",
+    environments: [
+      {
+        id: "production",
+        label: "正式資料庫",
+        url: productionRuntime.url,
+        anonKey: productionRuntime.anonKey
+      }
+    ],
+    current: {
+      id: "production",
+      label: "正式資料庫",
+      url: productionRuntime.url,
+      anonKey: productionRuntime.anonKey
+    },
+    isDefault: true,
+    requestedEnvironmentMissing: ""
+  };
+}
+
+function bindEnvironmentSwitcher() {
+  if (window.ROOC_CONFIG?.mountEnvironmentSwitcher && publicState.environmentState) {
+    window.ROOC_CONFIG.mountEnvironmentSwitcher(publicState.environmentState);
+  }
+}
+
+function getActiveEnvironmentLabel() {
+  return publicState.environmentState?.current?.label || "正式資料庫";
 }
 
 async function handleRefreshPublicEvents() {
@@ -263,6 +328,7 @@ function renderPublicEvent() {
   $("#public-stat-draws").textContent = event.draw_count ?? event.draws.length;
   $("#public-stat-audits").textContent = event.draws.filter((draw) => draw.audit).length;
 
+  syncPublicRosterButtons();
   renderPublicLiveBanner(event.live_draw);
   renderPrizeRows();
   renderAwardRows();
@@ -507,6 +573,136 @@ function clearPublicAnimationModeClasses(dialog) {
 
 function prefersReducedMotion() {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function handlePublicRosterButtonClick(event) {
+  const button = event.target.closest("[data-public-roster]");
+  if (!button) return;
+
+  openPublicRosterDialog(button.dataset.publicRoster);
+}
+
+function syncPublicRosterButtons() {
+  document.querySelectorAll("[data-public-roster]").forEach((button) => {
+    button.disabled = getPublicRosterList(button.dataset.publicRoster).length === 0;
+  });
+}
+
+function openPublicRosterDialog(rosterKey) {
+  const config = publicRosterDialogConfig(rosterKey);
+  const list = getPublicRosterList(rosterKey);
+  const dialog = $("#public-roster-dialog");
+
+  $("#public-roster-title").textContent = config.title;
+  $("#public-roster-count").textContent = `${list.length} 筆`;
+  $("#public-roster-subtitle").textContent = publicState.event?.title || "目前活動";
+  $("#public-roster-list").innerHTML = renderPublicRosterItems(list, config.empty, rosterKey);
+
+  if ($("#audit-dialog").open) closeAuditDialog();
+  if ($("#public-live-dialog").open) closePublicLiveDialog();
+  dialog.showModal();
+  refreshIcons();
+}
+
+function closePublicRosterDialog() {
+  const dialog = $("#public-roster-dialog");
+  if (dialog.open) dialog.close();
+}
+
+function getPublicRosterList(rosterKey) {
+  const event = publicState.event;
+  if (!event) return [];
+
+  const lists = {
+    public_prizes: event.prizes,
+    public_awards: event.awards,
+    public_draws: event.draws,
+    public_audits: event.draws.filter((draw) => draw.audit)
+  };
+
+  return asArray(lists[rosterKey]);
+}
+
+function publicRosterDialogConfig(rosterKey) {
+  const configs = {
+    public_prizes: {
+      title: "獎項名單",
+      empty: "這場活動沒有獎項紀錄。"
+    },
+    public_awards: {
+      title: "中獎名單",
+      empty: "這場活動沒有中獎紀錄。"
+    },
+    public_draws: {
+      title: "抽獎紀錄名單",
+      empty: "這場活動沒有抽獎紀錄。"
+    },
+    public_audits: {
+      title: "驗證快照名單",
+      empty: "這場活動沒有可驗證快照。"
+    }
+  };
+
+  return configs[rosterKey] || { title: "查看名單", empty: "目前沒有名單資料。" };
+}
+
+function renderPublicRosterItems(list, emptyMessage, rosterKey) {
+  if (list.length === 0) {
+    return `<div class="empty-state compact-empty"><p>${escapeHtml(emptyMessage)}</p></div>`;
+  }
+
+  if (rosterKey === "public_prizes") {
+    return list.map((prize) => `
+      <article class="roster-member">
+        <strong>${escapeHtml(prize.name)}</strong>
+        <p>${escapeHtml(publicPrizeMeta(prize))}</p>
+      </article>
+    `).join("");
+  }
+
+  if (rosterKey === "public_awards") {
+    return list.map((award) => `
+      <article class="roster-member">
+        <strong>${memberText(award.final_member_no, award.final_role_name)}</strong>
+        <p>${escapeHtml(publicAwardMeta(award))}</p>
+      </article>
+    `).join("");
+  }
+
+  if (rosterKey === "public_audits") {
+    return list.map((draw) => `
+      <article class="roster-member">
+        <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
+        <p>${escapeHtml(publicAuditMeta(draw))}</p>
+      </article>
+    `).join("");
+  }
+
+  return list.map((draw) => `
+    <article class="roster-member">
+      <strong>${memberText(draw.drawn_member_no, draw.drawn_role_name)}</strong>
+      <p>${escapeHtml(publicDrawMeta(draw))}</p>
+    </article>
+  `).join("");
+}
+
+function publicPrizeMeta(prize) {
+  return `${prize.provider || "未填提供者"} / 名額 ${prize.quantity ?? 0} / 已完成 ${prize.filled_count ?? 0} / 剩餘 ${prize.remaining_count ?? 0}`;
+}
+
+function publicAwardMeta(award) {
+  const drawn = memberPlainText(award.drawn_member_no, award.drawn_role_name);
+  const status = drawStatusText[award.status] || award.status;
+  return `${award.prize_name || "未命名獎項"} / ${status} / 原抽中 ${drawn} / ${formatDate(award.resolved_at)}`;
+}
+
+function publicDrawMeta(draw) {
+  return `${draw.prize_name || "未命名獎項"} / ${publicDrawStatusText(draw)} / ${formatDate(draw.created_at)}`;
+}
+
+function publicAuditMeta(draw) {
+  const audit = draw.audit || {};
+  return `${draw.prize_name || "未命名獎項"} / 可抽 ${audit.eligible_count ?? "-"} 人 / 抽中 #${audit.selected_index ?? "-"} / ${formatPercent(audit.step_probability)}`;
 }
 
 function renderPrizeRows() {

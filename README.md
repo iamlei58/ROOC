@@ -11,7 +11,7 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 - 被指定轉讓的人必須是公會中且尚未被排除的會員。
 - 獎項可有多個名額。
 - 抽獎過程中可以隨時新增獎項，用於現場加碼。
-- 系統保留中獎名單、抽獎時間、抽獎批次、抽獎 token、轉讓/放棄紀錄，並可匯出 CSV。
+- 系統保留中獎名單、抽獎時間、抽獎批次、抽獎 token、轉讓/放棄紀錄，並可匯出 Excel。
 
 ## Supabase Project
 
@@ -63,7 +63,22 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
+選用的測試資料庫變數：
+
+- `SUPABASE_TEST_URL`
+- `SUPABASE_TEST_ANON_KEY`
+- `SUPABASE_TEST_LABEL`，預設為 `測試資料庫 rooc_test`
+
 `SUPABASE_ANON_KEY` 是公開前端金鑰，可以放在 GitHub Pages；資料庫密碼與 service role key 不可以。
+
+正式頁面預設永遠使用 `production`。需要測試時，在網址加上 `?env=rooc_test`，例如：
+
+- `index.html?env=rooc_test`
+- `public.html?env=rooc_test`
+
+本機或帶有 `env` 參數時，頁面右上角會顯示資料庫切換器；一般正式入口不會顯示，避免正式使用介面被誤切到測試資料庫。
+
+前端的資料庫切換是切換 Supabase Project URL 與 anon key。若 `rooc_test` 是另一個 Supabase 專案，請填它自己的 Project URL 與 anon public key，並先在該專案套用 `supabase/schema.sql`。
 
 ## 本機使用
 
@@ -75,7 +90,7 @@ php scripts/write-config.php
 
 這會產生 `config.local.js`，該檔案已被 `.gitignore` 排除，不會被提交。
 
-之後直接用瀏覽器打開 `index.html`。
+之後直接用瀏覽器打開 `index.html`。如果 `.env` 有填入 `SUPABASE_TEST_URL` 與 `SUPABASE_TEST_ANON_KEY`，本機頁面會出現正式/測試資料庫切換器。
 
 ## GitHub Pages 部署
 
@@ -84,6 +99,9 @@ php scripts/write-config.php
 3. 到 Settings > Secrets and variables > Actions > Variables 新增：
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
+   - `SUPABASE_TEST_URL`，選填
+   - `SUPABASE_TEST_ANON_KEY`，選填
+   - `SUPABASE_TEST_LABEL`，選填
 4. push 到 `rooc` 分支後，`Deploy GitHub Pages` workflow 會自動部署。
 
 如果沒有設定 repo variables，部署後會顯示尚未連線。
@@ -92,7 +110,7 @@ php scripts/write-config.php
 
 1. 進入後台時輸入管理密碼，登入後才會載入活動、會員與紀錄資料。
 2. 在成員表單按「管理職業」，新增或修改職業。
-3. 新增/更新會員，或用「匯入名單」從 Excel/CSV 匯入會員。支援欄位：`編號`、`角色名稱`、`職業`、`是否加入DC`、`公會狀態`。
+3. 新增/更新會員，或用「匯入名單」從 `.xlsx` Excel 匯入會員。支援欄位：`編號`、`角色名稱`、`職業`、`是否加入DC`、`公會狀態`。
 4. 將已退會的人標記為退會。
 5. 到「活動/獎項」用活動名稱建立抽獎活動。
 6. 到「抽獎控制台」用活動名稱載入活動。
@@ -102,12 +120,15 @@ php scripts/write-config.php
    - 確認得獎
    - 放棄並重抽
    - 指定轉讓給另一個可收名單中的會員
-10. 活動結束後匯出 CSV。
+10. 活動結束後匯出 Excel。
 
 ## 檔案
 
 - `index.html`：前端頁面
+- `public.html`：公開驗證頁面
+- `shared.js`：兩個頁面共用的 Supabase 環境切換與設定載入
 - `app.js`：Supabase 連線與抽獎互動流程
+- `public.js`：公開驗證頁互動流程
 - `styles.css`：介面樣式
 - `config.js`：部署時的公開 Supabase 設定
 - `config.local.js`：本機設定產物，已被 git 忽略

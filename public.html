@@ -7,6 +7,7 @@
     <link rel="icon" href="https://file.joymaker.com/game/rooc/web/assets/zh-TW_logo-CNKqky8L.png" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <script src="config.js"></script>
+    <script src="shared.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script defer src="public.js"></script>
@@ -22,14 +23,23 @@
           </div>
         </div>
         <div class="hero-actions">
-          <div class="connection-pill" id="connection-pill">
-            <span class="dot"></span>
-            <span id="connection-text">尚未連線</span>
+          <div class="hero-status-group">
+            <div class="environment-switcher" id="environment-switcher" hidden>
+              <label for="environment-select">資料庫</label>
+              <select id="environment-select" aria-label="切換資料庫環境"></select>
+              <span data-environment-active-label hidden></span>
+            </div>
+            <div class="connection-pill" id="connection-pill">
+              <span class="dot"></span>
+              <span id="connection-text">尚未連線</span>
+            </div>
           </div>
-          <a class="btn secondary hero-public" href="index.html">
-            <i data-lucide="lock-keyhole"></i>
-            <span>管理後台</span>
-          </a>
+          <div class="hero-button-group">
+            <a class="btn secondary hero-public" href="index.html" data-environment-link>
+              <i data-lucide="lock-keyhole"></i>
+              <span>管理後台</span>
+            </a>
+          </div>
         </div>
       </header>
 
@@ -91,19 +101,31 @@
 
           <section class="stats-grid">
             <div>
-              <dt>獎項數</dt>
+              <dt>
+                <span>獎項數</span>
+                <button class="chip-button" type="button" data-public-roster="public_prizes">查看名單</button>
+              </dt>
               <dd id="public-stat-prizes">0</dd>
             </div>
             <div>
-              <dt>中獎紀錄</dt>
+              <dt>
+                <span>中獎紀錄</span>
+                <button class="chip-button" type="button" data-public-roster="public_awards">查看名單</button>
+              </dt>
               <dd id="public-stat-awards">0</dd>
             </div>
             <div>
-              <dt>抽獎紀錄</dt>
+              <dt>
+                <span>抽獎紀錄</span>
+                <button class="chip-button" type="button" data-public-roster="public_draws">查看名單</button>
+              </dt>
               <dd id="public-stat-draws">0</dd>
             </div>
             <div>
-              <dt>驗證快照</dt>
+              <dt>
+                <span>驗證快照</span>
+                <button class="chip-button" type="button" data-public-roster="public_audits">查看名單</button>
+              </dt>
               <dd id="public-stat-audits">0</dd>
             </div>
           </section>
@@ -171,6 +193,24 @@
           </section>
         </div>
       </section>
+
+      <dialog class="modal roster-modal" id="public-roster-dialog">
+        <div class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="section-label" id="public-roster-subtitle">目前活動</p>
+              <h3 id="public-roster-title">查看名單</h3>
+            </div>
+            <button class="btn icon-button" type="button" id="close-public-roster-dialog" aria-label="關閉名單">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="roster-dialog-summary">
+            <span class="status-badge" id="public-roster-count">0 筆</span>
+          </div>
+          <div class="roster-dialog-list" id="public-roster-list"></div>
+        </div>
+      </dialog>
 
       <dialog class="modal audit-modal" id="audit-dialog">
         <div class="modal-shell">
