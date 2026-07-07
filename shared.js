@@ -274,3 +274,273 @@ window.ROOC_CONFIG = (() => {
     resolveSupabaseEnvironment
   };
 })();
+
+window.ROOC_DRAW_ANIMATION = (() => {
+  const VISUAL_MODES = [
+    "fireworks",
+    "classic",
+    "spotlight",
+    "starlight",
+    "ripple",
+    "aurora",
+    "runes",
+    "confetti",
+    "curtain"
+  ];
+  const REVEAL_MODES = ["roller", "flip"];
+  const DENSE_FLIP_CARD_THRESHOLD = 24;
+
+  function cleanString(value) {
+    return String(value || "").trim();
+  }
+
+  function hashSeed(seed) {
+    const text = cleanString(seed) || `${Date.now()}:${Math.random()}`;
+    let hash = 2166136261;
+
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return hash >>> 0;
+  }
+
+  function pickFrom(list, seed) {
+    return list[hashSeed(seed) % list.length];
+  }
+
+  function resolveChoice(seed) {
+    const source = cleanString(seed);
+    return {
+      visualMode: pickFrom(VISUAL_MODES, `${source}:visual`),
+      revealMode: pickFrom(REVEAL_MODES, `${source}:reveal`)
+    };
+  }
+
+  function clearVisualModeClasses(target) {
+    if (!target) return;
+    VISUAL_MODES.forEach((mode) => target.classList.remove(`mode-${mode}`));
+  }
+
+  function clearRevealModeClasses(target) {
+    if (!target) return;
+    REVEAL_MODES.forEach((mode) => target.classList.remove(`reveal-${mode}`));
+  }
+
+  function phaseText(visualMode, drawCount, revealMode = "roller") {
+    if (revealMode === "flip") {
+      return drawCount > 1 ? `翻牌洗牌中 / ${drawCount} 位` : "翻牌抽選中";
+    }
+
+    const prefix = {
+      fireworks: "煙火升空中",
+      classic: "跑燈抽選中",
+      spotlight: "聚光抽選中",
+      starlight: "星幕抽選中",
+      ripple: "能量聚集中",
+      aurora: "極光流轉中",
+      runes: "符紋輪轉中",
+      confetti: "花火飄落中",
+      curtain: "舞台揭幕中"
+    }[visualMode] || "抽選中";
+
+    return drawCount > 1 ? `${prefix} / ${drawCount} 位` : prefix;
+  }
+
+  function normalizeResultItem(row = {}, context = {}) {
+    const roleName = cleanString(
+      row.role_name
+      || row.drawn_role_name
+      || row.final_role_name
+      || row.member_name
+      || row.name
+      || row.member_no
+      || row.drawn_member_no
+      || row.final_member_no
+      || context.prizeName
+      || "幸運得主"
+    );
+    const memberNo = cleanString(row.member_no || row.drawn_member_no || row.final_member_no);
+
+    return { roleName, memberNo };
+  }
+
+  function resultLabel(row, context = {}) {
+    if (!row) return "";
+
+    const item = normalizeResultItem(row, context);
+    const memberNo = item.memberNo && item.memberNo !== item.roleName ? `（${item.memberNo}）` : "";
+    return `${item.roleName}${memberNo}`;
+  }
+
+  function renderFlipCards(rows, context = {}, escapeHtmlFn = escapeHtml) {
+    const escape = typeof escapeHtmlFn === "function" ? escapeHtmlFn : escapeHtml;
+    const cards = Array.isArray(rows) && rows.length > 0
+      ? rows
+      : [{ role_name: context.prizeName, member_no: "" }];
+
+    return cards
+      .map((row, index) => {
+        const item = normalizeResultItem(row, context);
+        const memberNo = item.memberNo && item.memberNo !== item.roleName ? item.memberNo : "";
+        return `
+          <div class="draw-flip-card" style="--flip-delay: ${flipDelay(index, cards.length)}s">
+            <div class="draw-flip-card-inner">
+              <div class="draw-flip-card-face draw-flip-card-front">
+                <strong>${escape(item.roleName)}</strong>
+                ${memberNo ? `<small>${escape(memberNo)}</small>` : ""}
+              </div>
+              <div class="draw-flip-card-face draw-flip-card-back">
+                <span>ROOC</span>
+                <strong>?</strong>
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderFlipPlaceholders(drawCount, escapeHtmlFn = escapeHtml) {
+    const escape = typeof escapeHtmlFn === "function" ? escapeHtmlFn : escapeHtml;
+    const count = Math.max(1, Math.trunc(Number(drawCount) || 1));
+
+    return Array.from({ length: count }, (_, index) => `
+      <div class="draw-flip-card is-waiting" style="--flip-delay: ${flipDelay(index, count)}s">
+        <div class="draw-flip-card-inner">
+          <div class="draw-flip-card-face draw-flip-card-front">
+            <span>WAIT</span>
+            <strong>${escape("待揭曉")}</strong>
+          </div>
+          <div class="draw-flip-card-face draw-flip-card-back">
+            <span>ROOC</span>
+            <strong>?</strong>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function flipDelay(index, total) {
+    if (total <= 10) return Number((index * 0.12).toFixed(2));
+    if (total <= 30) return Number((index * 0.06).toFixed(2));
+    return Number((index * 0.025).toFixed(3));
+  }
+
+  function revealWaitTime(count, revealMode) {
+    if (revealMode === "flip") {
+      return Math.min(3400, 900 + count * 140);
+    }
+    return 1450;
+  }
+
+  function isDenseFlip(count) {
+    return Number(count || 0) > DENSE_FLIP_CARD_THRESHOLD;
+  }
+
+  function launchConfetti(resultCount) {
+    if (typeof window.confetti !== "function") return;
+
+    const count = Math.min(Math.max(resultCount || 1, 1), 8);
+    const baseOptions = {
+      particleCount: 30 + count * 7,
+      spread: 58,
+      startVelocity: 38,
+      ticks: 130,
+      scalar: 0.82,
+      colors: ["#087f8c", "#d95d39", "#f4b942", "#2f855a", "#ffffff"],
+      zIndex: 2000,
+      disableForReducedMotion: true
+    };
+
+    window.confetti({
+      ...baseOptions,
+      angle: 60,
+      origin: { x: 0.18, y: 0.74 }
+    });
+    window.confetti({
+      ...baseOptions,
+      angle: 120,
+      origin: { x: 0.82, y: 0.74 }
+    });
+  }
+
+  function createFireworks(container) {
+    const FireworksConstructor = window.Fireworks?.default || window.Fireworks?.Fireworks || window.Fireworks || null;
+    if (!container || typeof FireworksConstructor !== "function") return null;
+
+    return new FireworksConstructor(container, {
+      autoresize: true,
+      opacity: 0.38,
+      acceleration: 1.04,
+      friction: 0.97,
+      gravity: 1.35,
+      particles: 24,
+      traceLength: 2,
+      traceSpeed: 7,
+      explosion: 3,
+      intensity: 10,
+      flickering: 42,
+      hue: { min: 22, max: 190 },
+      delay: { min: 60, max: 110 },
+      rocketsPoint: { min: 28, max: 72 },
+      brightness: { min: 54, max: 88 },
+      decay: { min: 0.015, max: 0.03 },
+      mouse: { click: false, move: false, max: 1 }
+    });
+  }
+
+  function launchFireworks(fireworks, resultCount) {
+    if (!fireworks?.launch) return;
+
+    const count = Math.min(Math.max(resultCount || 1, 2), 8);
+    fireworks.launch(count);
+  }
+
+  function stopFireworks(fireworks, container) {
+    if (fireworks?.stop) {
+      try {
+        fireworks.stop(true);
+      } catch {
+        // Animation cleanup should never block the raffle flow.
+      }
+    }
+
+    if (container) {
+      container.innerHTML = "";
+    }
+  }
+
+  function escapeHtml(value) {
+    return cleanString(value).replace(/[&<>"']/g, (char) => {
+      const map = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      };
+      return map[char];
+    });
+  }
+
+  return {
+    DENSE_FLIP_CARD_THRESHOLD,
+    REVEAL_MODES,
+    VISUAL_MODES,
+    clearRevealModeClasses,
+    clearVisualModeClasses,
+    createFireworks,
+    isDenseFlip,
+    launchConfetti,
+    launchFireworks,
+    phaseText,
+    renderFlipCards,
+    renderFlipPlaceholders,
+    resolveChoice,
+    resultLabel,
+    revealWaitTime,
+    stopFireworks
+  };
+})();

@@ -2,6 +2,8 @@
 
 GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統。
 
+前端目前已接上 Vue 3 + Vite build 流程。現有後台與公開驗證頁仍保留原本穩定的靜態 DOM/RPC 行為，新的抽獎互動會逐步改用 Vue 元件承接。
+
 ## 核心規則
 
 - 參加者來自 Supabase 的 `rooc_members` 會員表。
@@ -56,7 +58,7 @@ GitHub Pages 靜態前端搭配 Supabase Postgres/RPC 的會員池抽獎系統�
 
 ## 設定方式
 
-前端不需要在畫面貼 Supabase 設定。正式部署時，GitHub Actions 會用 repo variables 產生 `config.js`。
+前端不需要在畫面貼 Supabase 設定。正式部署時，GitHub Actions 會先執行 Vite build，再用 repo variables 產生 `dist/config.js`。
 
 需要的變數：
 
@@ -90,7 +92,18 @@ php scripts/write-config.php
 
 這會產生 `config.local.js`，該檔案已被 `.gitignore` 排除，不會被提交。
 
-之後直接用瀏覽器打開 `index.html`。如果 `.env` 有填入 `SUPABASE_TEST_URL` 與 `SUPABASE_TEST_ANON_KEY`，本機頁面會出現正式/測試資料庫切換器。
+安裝前端依賴並啟動 Vite：
+
+```bash
+npm install
+npm run dev
+```
+
+Vite 8 需要 Node `^20.19.0` 或 `>=22.12.0`；GitHub Actions 已設定使用 Node 24。
+
+Vite 會提供本機網址給後台與公開驗證頁使用。如果 `.env` 有填入 `SUPABASE_TEST_URL` 與 `SUPABASE_TEST_ANON_KEY`，本機頁面會出現正式/測試資料庫切換器。
+
+舊的直接打開 `index.html` 方式仍可檢查既有靜態頁，但 Vue 元件與後續新抽獎模式請用 Vite dev server。
 
 ## GitHub Pages 部署
 
@@ -102,7 +115,7 @@ php scripts/write-config.php
    - `SUPABASE_TEST_URL`，選填
    - `SUPABASE_TEST_ANON_KEY`，選填
    - `SUPABASE_TEST_LABEL`，選填
-4. push 到 `rooc` 分支後，`Deploy GitHub Pages` workflow 會自動部署。
+4. push 到 `rooc` 分支後，`Deploy GitHub Pages` workflow 會安裝 Node 依賴、執行 `npm run build`，並部署 `dist/`。
 
 如果沒有設定 repo variables，部署後會顯示尚未連線。
 
@@ -126,6 +139,9 @@ php scripts/write-config.php
 
 - `index.html`：前端頁面
 - `public.html`：公開驗證頁面
+- `package.json`：Vue/Vite 依賴與 build 指令
+- `vite.config.js`：Vite 多頁 build 與 legacy static copy 設定
+- `src/`：Vue 入口、橋接元件與後續元件化區域
 - `shared.js`：兩個頁面共用的 Supabase 環境切換與設定載入
 - `app.js`：Supabase 連線與抽獎互動流程
 - `public.js`：公開驗證頁互動流程
@@ -134,5 +150,6 @@ php scripts/write-config.php
 - `config.local.js`：本機設定產物，已被 git 忽略
 - `.env.example`：本機設定範例
 - `scripts/write-config.php`：由 `.env` 產生 `config.local.js`
+- `scripts/write-runtime-config.mjs`：GitHub Actions 部署時產生 `dist/config.js`
 - `supabase/schema.sql`：資料表、RLS、RPC
 - `.github/workflows/deploy-pages.yml`：GitHub Pages workflow

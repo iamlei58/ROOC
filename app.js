@@ -4,19 +4,9 @@ const STORAGE_KEYS = {
   appAdminPin: "rooc_app_admin_pin"
 };
 
-const DRAW_ANIMATION_MODES = [
-  "fireworks",
-  "classic",
-  "spotlight",
-  "starlight",
-  "ripple",
-  "aurora",
-  "runes",
-  "confetti",
-  "curtain"
-];
-
 const PENDING_DRAW_PAGE_SIZE = 20;
+const DRAW_LOG_RENDER_LIMIT = 80;
+const DRAW_EFFECT_CLEANUP_MS = 2600;
 
 const state = {
   client: null,
@@ -41,7 +31,6 @@ const state = {
   memberImportExisting: new Map(),
   eventSlugHint: "",
   drawAnimationMode: "fireworks",
-  lastDrawAnimationMode: "",
   memberSort: {
     key: "member_no",
     direction: "asc"
@@ -59,7 +48,8 @@ const drawAnimationState = {
   intervalId: null,
   labels: [],
   index: 0,
-  fireworks: null
+  fireworks: null,
+  effectCleanupId: null
 };
 const toastLayerState = {
   homeParent: null,
@@ -304,6 +294,13 @@ async function loadAdminBootstrapData() {
 function hydrateEventTitle() {
   const params = new URLSearchParams(window.location.search);
   state.eventSlugHint = params.get("slug") || params.get("event") || readLocalValue(STORAGE_KEYS.eventSlug) || "";
+}
+
+function resolveDrawAnimationChoice(seed) {
+  return window.ROOC_DRAW_ANIMATION?.resolveChoice(seed) || {
+    visualMode: "classic",
+    revealMode: "roller"
+  };
 }
 
 function configureClient(url, anonKey) {
@@ -1115,7 +1112,9 @@ function renderHistoryEvent() {
 
   renderPrizeRows("#history-prize-table", event.prizes, "這場活動沒有獎項紀錄。");
   renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。");
-  renderDrawLogRows("#history-draw-log-table", event.recent_draws, "這場活動沒有抽獎紀錄。", event.slug);
+  renderDrawLogRows("#history-draw-log-table", event.recent_draws, "這場活動沒有抽獎紀錄。", event.slug, {
+    limit: DRAW_LOG_RENDER_LIMIT
+  });
   refreshIcons();
 }
 
@@ -1627,19 +1626,25 @@ function renderAwardRows(selector, awards, emptyMessage) {
 }
 
 function renderDrawLog() {
-  renderDrawLogRows("#draw-log-table", state.event.recent_draws, "尚未有抽獎紀錄。", state.event.slug);
+  renderDrawLogRows("#draw-log-table", state.event.recent_draws, "尚未有抽獎紀錄。", state.event.slug, {
+    limit: DRAW_LOG_RENDER_LIMIT
+  });
 }
 
-function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "") {
+function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "", options = {}) {
   const body = $(selector);
   body.innerHTML = "";
+  const allDraws = asArray(draws);
+  const limit = Number(options.limit || 0);
+  const visibleDraws = limit > 0 ? allDraws.slice(0, limit) : allDraws;
+  const hiddenCount = Math.max(allDraws.length - visibleDraws.length, 0);
 
-  if (draws.length === 0) {
+  if (allDraws.length === 0) {
     appendEmptyRow(body, 6, emptyMessage);
     return;
   }
 
-  draws.forEach((draw) => {
+  visibleDraws.forEach((draw) => {
     const row = document.createElement("tr");
     const verifyUrl = buildPublicVerifyUrl(eventSlug, draw.id);
     row.innerHTML = `
@@ -1657,6 +1662,10 @@ function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "") {
     `;
     body.appendChild(row);
   });
+
+  if (hiddenCount > 0) {
+    appendEmptyRow(body, 6, `僅顯示最近 ${visibleDraws.length} 筆，另有 ${hiddenCount} 筆可用 Excel 匯出查看。`);
+  }
 }
 
 function drawLogResultText(draw) {
@@ -1763,9 +1772,12 @@ async function handleDrawPrize() {
       p_draw_count: drawCount
     });
 
+    const animationChoice = resolveDrawAnimationChoice(liveDraw?.id || `${state.event.slug}:${prizeId}:${Date.now()}`);
     const animationContext = {
       prizeName: liveDraw?.prize_name || prize?.name || $("#draw-prize-select").selectedOptions[0]?.textContent || "抽獎",
-      drawCount
+      drawCount,
+      revealMode: animationChoice.revealMode,
+      visualMode: animationChoice.visualMode
     };
 
     let keepResultOpen = false;
@@ -1821,21 +1833,30 @@ function openDrawAnimation(context) {
   const prize = $("#draw-animation-prize");
   const roller = $("#draw-animation-roller");
   const results = $("#draw-animation-results");
-  const mode = pickDrawAnimationMode();
+  const flipResults = $("#draw-animation-flip-results");
+  const mode = context.visualMode || "classic";
+  const revealMode = context.revealMode || "roller";
+  const isFlipReveal = revealMode === "flip";
   const isFireworksMode = mode === "fireworks";
 
   stopDrawRoller();
+  clearDrawEffectCleanup();
   stopDrawFireworks();
-  clearDrawAnimationModeClasses(dialog);
-  dialog.classList.remove("is-revealed", "has-multiple-results");
+  window.ROOC_DRAW_ANIMATION.clearVisualModeClasses(dialog);
+  window.ROOC_DRAW_ANIMATION.clearRevealModeClasses(dialog);
+  dialog.classList.remove("is-revealed", "has-multiple-results", "has-flip-results");
   dialog.classList.add(`mode-${mode}`);
-  phase.textContent = drawAnimationPhaseText(mode, context.drawCount);
+  dialog.classList.add(`reveal-${revealMode}`);
+  phase.textContent = window.ROOC_DRAW_ANIMATION.phaseText(mode, context.drawCount, revealMode);
   prize.textContent = context.prizeName;
   results.innerHTML = "";
+  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(context.drawCount));
+  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipPlaceholders(context.drawCount, escapeHtml) : "";
+  state.drawAnimationMode = mode;
 
   drawAnimationState.labels = buildDrawRollerLabels();
   drawAnimationState.index = 0;
-  roller.textContent = drawAnimationState.labels[0] || "ROOC";
+  roller.textContent = isFlipReveal ? "" : (drawAnimationState.labels[0] || "ROOC");
 
   showModalDialog(dialog);
 
@@ -1843,7 +1864,7 @@ function openDrawAnimation(context) {
     startDrawFireworks();
   }
 
-  if (!prefersReducedMotion()) {
+  if (!isFlipReveal && !prefersReducedMotion()) {
     drawAnimationState.intervalId = window.setInterval(() => {
       drawAnimationState.index = (drawAnimationState.index + 1) % drawAnimationState.labels.length;
       roller.textContent = drawAnimationState.labels[drawAnimationState.index];
@@ -1856,30 +1877,39 @@ async function revealDrawAnimationResults(rows, context) {
   const phase = $("#draw-animation-phase");
   const roller = $("#draw-animation-roller");
   const results = $("#draw-animation-results");
+  const flipResults = $("#draw-animation-flip-results");
   const labels = rows.map(drawResultLabel).filter(Boolean);
   const hasMultipleResults = labels.length > 1;
+  const revealMode = context.revealMode || "roller";
+  const isFlipReveal = revealMode === "flip";
 
   stopDrawRoller();
   dialog.classList.add("is-revealed");
   dialog.classList.toggle("has-multiple-results", hasMultipleResults);
-  phase.textContent = hasMultipleResults ? "中獎名單" : "中獎者";
-  roller.textContent = hasMultipleResults ? "" : (labels[0] || context.prizeName);
-  results.innerHTML = (hasMultipleResults ? labels : [])
+  dialog.classList.toggle("has-flip-results", isFlipReveal);
+  phase.textContent = isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者");
+  roller.textContent = isFlipReveal || hasMultipleResults ? "" : (labels[0] || context.prizeName);
+  results.innerHTML = (!isFlipReveal && hasMultipleResults ? labels : [])
     .map((label, index) => `<div class="draw-result-item" style="animation-delay: ${index * 0.06}s">${escapeHtml(label)}</div>`)
     .join("");
+  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipCards(rows, context, escapeHtml) : "";
+  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(rows.length));
 
   launchDrawFireworks(labels.length || context.drawCount);
   launchDrawConfetti(labels.length || context.drawCount);
-  await waitForAnimation(prefersReducedMotion() ? 260 : 1450);
+  scheduleDrawEffectCleanup();
+  await waitForAnimation(prefersReducedMotion() ? 260 : window.ROOC_DRAW_ANIMATION.revealWaitTime(labels.length || context.drawCount, revealMode));
 }
 
 function closeDrawAnimation() {
   const dialog = $("#draw-animation-dialog");
   stopDrawRoller();
+  clearDrawEffectCleanup();
   stopDrawFireworks();
   closeModalDialog(dialog);
-  dialog.classList.remove("is-revealed", "has-multiple-results");
-  clearDrawAnimationModeClasses(dialog);
+  dialog.classList.remove("is-revealed", "has-multiple-results", "has-flip-results");
+  window.ROOC_DRAW_ANIMATION.clearVisualModeClasses(dialog);
+  window.ROOC_DRAW_ANIMATION.clearRevealModeClasses(dialog);
 }
 
 function handleDrawAnimationClick(event) {
@@ -1889,37 +1919,6 @@ function handleDrawAnimationClick(event) {
   if (event.target === dialog) {
     closeDrawAnimation();
   }
-}
-
-function pickDrawAnimationMode() {
-  const pool = DRAW_ANIMATION_MODES.filter((mode) => mode !== state.lastDrawAnimationMode);
-  const options = pool.length > 0 ? pool : DRAW_ANIMATION_MODES;
-  const mode = options[Math.floor(Math.random() * options.length)] || "fireworks";
-  state.drawAnimationMode = mode;
-  state.lastDrawAnimationMode = mode;
-  return mode;
-}
-
-function clearDrawAnimationModeClasses(dialog) {
-  DRAW_ANIMATION_MODES.forEach((mode) => {
-    dialog.classList.remove(`mode-${mode}`);
-  });
-}
-
-function drawAnimationPhaseText(mode, drawCount) {
-  const prefix = {
-    fireworks: "煙火升空中",
-    classic: "跑燈抽選中",
-    spotlight: "聚光抽選中",
-    starlight: "星幕抽選中",
-    ripple: "能量聚集中",
-    aurora: "極光流轉中",
-    runes: "符紋輪轉中",
-    confetti: "花火飄落中",
-    curtain: "舞台揭幕中"
-  }[mode] || "抽選中";
-
-  return drawCount > 1 ? `${prefix} / ${drawCount} 位` : prefix;
 }
 
 function stopDrawRoller() {
@@ -1942,10 +1941,7 @@ function buildDrawRollerLabels() {
 }
 
 function drawResultLabel(row) {
-  if (!row) return "";
-  const roleName = row.role_name || row.member_no || "";
-  const memberNo = row.member_no && row.member_no !== roleName ? `（${row.member_no}）` : "";
-  return `${roleName}${memberNo}`;
+  return window.ROOC_DRAW_ANIMATION.resultLabel(row);
 }
 
 function sortDrawRows(rows) {
@@ -1966,61 +1962,19 @@ function sortDrawRows(rows) {
 }
 
 function launchDrawConfetti(resultCount) {
-  if (typeof window.confetti !== "function") return;
-
-  const count = Math.min(Math.max(resultCount || 1, 1), 8);
-  const baseOptions = {
-    particleCount: 48 + count * 12,
-    spread: 64,
-    startVelocity: 44,
-    ticks: 180,
-    scalar: 0.92,
-    colors: ["#087f8c", "#d95d39", "#f4b942", "#2f855a", "#ffffff"],
-    zIndex: 2000,
-    disableForReducedMotion: true
-  };
-
-  window.confetti({
-    ...baseOptions,
-    angle: 60,
-    origin: { x: 0.18, y: 0.74 }
-  });
-  window.confetti({
-    ...baseOptions,
-    angle: 120,
-    origin: { x: 0.82, y: 0.74 }
-  });
+  window.ROOC_DRAW_ANIMATION.launchConfetti(resultCount);
 }
 
 function startDrawFireworks() {
   if (prefersReducedMotion()) return;
 
   const container = $("#draw-fireworks-layer");
-  const FireworksConstructor = getFireworksConstructor();
-  if (!container || typeof FireworksConstructor !== "function") return;
+  if (!container) return;
 
   stopDrawFireworks();
   try {
-    drawAnimationState.fireworks = new FireworksConstructor(container, {
-      autoresize: true,
-      opacity: 0.46,
-      acceleration: 1.04,
-      friction: 0.97,
-      gravity: 1.35,
-      particles: 44,
-      traceLength: 3,
-      traceSpeed: 9,
-      explosion: 5,
-      intensity: 18,
-      flickering: 54,
-      hue: { min: 22, max: 190 },
-      delay: { min: 34, max: 74 },
-      rocketsPoint: { min: 28, max: 72 },
-      brightness: { min: 54, max: 88 },
-      decay: { min: 0.015, max: 0.03 },
-      mouse: { click: false, move: false, max: 1 }
-    });
-    drawAnimationState.fireworks.start();
+    drawAnimationState.fireworks = window.ROOC_DRAW_ANIMATION.createFireworks(container);
+    drawAnimationState.fireworks?.start();
   } catch {
     stopDrawFireworks();
   }
@@ -2030,32 +1984,32 @@ function launchDrawFireworks(resultCount) {
   if (state.drawAnimationMode !== "fireworks" || prefersReducedMotion()) return;
 
   const fireworks = drawAnimationState.fireworks;
-  if (!fireworks?.launch) return;
+  window.ROOC_DRAW_ANIMATION.launchFireworks(fireworks, resultCount);
+}
 
-  const count = Math.min(Math.max(resultCount || 1, 2), 8);
-  fireworks.launch(count);
+function scheduleDrawEffectCleanup() {
+  clearDrawEffectCleanup();
+  if (state.drawAnimationMode !== "fireworks") return;
+
+  drawAnimationState.effectCleanupId = window.setTimeout(() => {
+    drawAnimationState.effectCleanupId = null;
+    stopDrawFireworks();
+  }, DRAW_EFFECT_CLEANUP_MS);
+}
+
+function clearDrawEffectCleanup() {
+  if (!drawAnimationState.effectCleanupId) return;
+  window.clearTimeout(drawAnimationState.effectCleanupId);
+  drawAnimationState.effectCleanupId = null;
 }
 
 function stopDrawFireworks() {
+  clearDrawEffectCleanup();
   const fireworks = drawAnimationState.fireworks;
   drawAnimationState.fireworks = null;
 
-  if (fireworks?.stop) {
-    try {
-      fireworks.stop(true);
-    } catch {
-      // Animation cleanup should never block the raffle flow.
-    }
-  }
-
   const container = $("#draw-fireworks-layer");
-  if (container) {
-    container.innerHTML = "";
-  }
-}
-
-function getFireworksConstructor() {
-  return window.Fireworks?.default || window.Fireworks?.Fireworks || window.Fireworks || null;
+  window.ROOC_DRAW_ANIMATION.stopFireworks(fireworks, container);
 }
 
 function waitForAnimation(ms) {

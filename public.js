@@ -12,21 +12,15 @@ const publicState = {
   liveRollerTimer: null,
   liveRollerLabels: [],
   liveRollerIndex: 0,
-  lastAnimationMode: ""
+  liveAnimationChoice: null,
+  liveAnimationMode: "",
+  liveRevealMode: "roller",
+  liveFireworks: null,
+  liveEffectCleanupId: null
 };
 
 const PUBLIC_REFRESH_INTERVAL = 2500;
-const PUBLIC_DRAW_ANIMATION_MODES = [
-  "fireworks",
-  "classic",
-  "spotlight",
-  "starlight",
-  "ripple",
-  "aurora",
-  "runes",
-  "confetti",
-  "curtain"
-];
+const PUBLIC_DRAW_EFFECT_CLEANUP_MS = 2600;
 
 const drawStatusText = {
   pending: "待處理",
@@ -306,8 +300,63 @@ function normalizePublicEvent(event) {
     ...event,
     prizes: asArray(event.prizes),
     awards: asArray(event.awards),
-    draws: asArray(event.draws),
+    draws: asArray(event.draws).map((draw) => normalizePublicDraw(draw, event)),
     live_draw: event.live_draw || null
+  };
+}
+
+function normalizePublicDraw(draw, event = {}) {
+  const source = draw && typeof draw === "object" ? draw : {};
+  const normalized = { ...source };
+  if (!normalized.event_id && event?.id) {
+    normalized.event_id = event.id;
+  }
+
+  if (source.audit && typeof source.audit === "object") {
+    normalized.audit = normalizePublicAudit(source.audit, source);
+    return normalized;
+  }
+
+  const hasFlatAudit = [
+    "step_probability",
+    "round_probability",
+    "eligible_count",
+    "selected_index",
+    "eligible_manifest_hash",
+    "random_seed",
+    "random_token"
+  ].some((key) => source[key] != null);
+
+  if (hasFlatAudit) {
+    normalized.audit = normalizePublicAudit(source, source);
+  }
+
+  return normalized;
+}
+
+function normalizePublicAudit(audit, draw = {}) {
+  const source = audit && typeof audit === "object" ? audit : {};
+  const eligibleMembers = asArray(source.eligible_members);
+
+  return {
+    id: source.id || source.audit_id || "",
+    algorithm: source.algorithm || (source.selector_hash ? "sha256" : ""),
+    round_id: source.round_id || "",
+    round_draw_count: source.round_draw_count ?? 1,
+    round_index: source.round_index ?? draw.slot_number ?? source.selected_index ?? "",
+    active_member_count: source.active_member_count ?? "",
+    excluded_count_before: source.excluded_count_before ?? "",
+    provider_excluded: Boolean(source.provider_excluded),
+    eligible_count: source.eligible_count ?? "",
+    step_probability: source.step_probability ?? "",
+    round_probability: source.round_probability ?? source.step_probability ?? "",
+    prize_remaining_before: source.prize_remaining_before ?? "",
+    random_seed: source.random_seed || source.random_token || "",
+    eligible_manifest: source.eligible_manifest || "",
+    eligible_manifest_hash: source.eligible_manifest_hash || "",
+    selector_hash: source.selector_hash || "",
+    selected_index: source.selected_index ?? "",
+    eligible_members: eligibleMembers
   };
 }
 
@@ -436,6 +485,14 @@ function getPublicLiveResultDraws(event, live, newDraws = []) {
   return newDraws;
 }
 
+function resolvePublicLiveAnimationChoice(live = {}, draws = []) {
+  const seed = live.id || draws[0]?.id || `${publicState.event?.slug || "public"}:${live.prize_name || "draw"}`;
+  return window.ROOC_DRAW_ANIMATION?.resolveChoice(seed) || {
+    visualMode: "classic",
+    revealMode: "roller"
+  };
+}
+
 function openPublicLiveAnimation(live = {}) {
   const dialog = $("#public-live-dialog");
   const currentLiveId = live.id || "";
@@ -446,18 +503,33 @@ function openPublicLiveAnimation(live = {}) {
   }
 
   stopPublicLiveRoller();
-  clearPublicAnimationModeClasses(dialog);
-  dialog.classList.remove("is-revealed", "has-multiple-results");
-  dialog.classList.add(`mode-${pickPublicAnimationMode()}`);
+  clearPublicLiveEffectCleanup();
+  stopPublicLiveFireworks();
+  window.ROOC_DRAW_ANIMATION.clearVisualModeClasses(dialog);
+  window.ROOC_DRAW_ANIMATION.clearRevealModeClasses(dialog);
+  dialog.classList.remove("is-revealed", "has-multiple-results", "has-flip-results");
+  publicState.liveAnimationChoice = resolvePublicLiveAnimationChoice(live);
+  publicState.liveAnimationMode = publicState.liveAnimationChoice.visualMode;
+  publicState.liveRevealMode = publicState.liveAnimationChoice.revealMode;
+  dialog.classList.add(`mode-${publicState.liveAnimationMode}`);
+  dialog.classList.add(`reveal-${publicState.liveRevealMode}`);
   publicState.liveDialogId = currentLiveId;
 
-  $("#public-live-phase").textContent = "抽獎同步中";
+  $("#public-live-phase").textContent = window.ROOC_DRAW_ANIMATION.phaseText(
+    publicState.liveAnimationMode,
+    live.draw_count || 1,
+    publicState.liveRevealMode
+  );
   $("#public-live-prize").textContent = live.prize_name || "抽獎";
   $("#public-live-results").innerHTML = "";
+  $("#public-live-flip-results").classList.toggle("is-dense", publicState.liveRevealMode === "flip" && window.ROOC_DRAW_ANIMATION.isDenseFlip(live.draw_count));
+  $("#public-live-flip-results").innerHTML = publicState.liveRevealMode === "flip"
+    ? window.ROOC_DRAW_ANIMATION.renderFlipPlaceholders(live.draw_count || 1, escapeHtml)
+    : "";
 
   publicState.liveRollerLabels = buildPublicLiveRollerLabels();
   publicState.liveRollerIndex = 0;
-  $("#public-live-roller").textContent = publicState.liveRollerLabels[0] || "ROOC";
+  $("#public-live-roller").textContent = publicState.liveRevealMode === "flip" ? "" : (publicState.liveRollerLabels[0] || "ROOC");
 
   if ($("#audit-dialog").open) {
     closeAuditDialog();
@@ -467,7 +539,11 @@ function openPublicLiveAnimation(live = {}) {
     dialog.showModal();
   }
 
-  if (!prefersReducedMotion()) {
+  if (publicState.liveAnimationMode === "fireworks") {
+    startPublicLiveFireworks();
+  }
+
+  if (publicState.liveRevealMode !== "flip" && !prefersReducedMotion()) {
     publicState.liveRollerTimer = window.setInterval(() => {
       publicState.liveRollerIndex = (publicState.liveRollerIndex + 1) % publicState.liveRollerLabels.length;
       $("#public-live-roller").textContent = publicState.liveRollerLabels[publicState.liveRollerIndex];
@@ -481,16 +557,38 @@ function revealPublicLiveResults(draws, live = {}) {
   const dialog = $("#public-live-dialog");
   const labels = draws.map(publicDrawResultLabel).filter(Boolean);
   const hasMultipleResults = labels.length > 1;
+  const choice = publicState.liveAnimationChoice || resolvePublicLiveAnimationChoice(live, draws);
+  const revealMode = choice.revealMode || "roller";
+  const isFlipReveal = revealMode === "flip";
+  const flipResults = $("#public-live-flip-results");
+  publicState.liveAnimationChoice = choice;
+  publicState.liveAnimationMode = choice.visualMode || "classic";
+  publicState.liveRevealMode = revealMode;
+  window.ROOC_DRAW_ANIMATION.clearVisualModeClasses(dialog);
+  window.ROOC_DRAW_ANIMATION.clearRevealModeClasses(dialog);
+  dialog.classList.add(`mode-${publicState.liveAnimationMode}`);
+  dialog.classList.add(`reveal-${revealMode}`);
 
   stopPublicLiveRoller();
   dialog.classList.add("is-revealed");
   dialog.classList.toggle("has-multiple-results", hasMultipleResults);
-  $("#public-live-phase").textContent = hasMultipleResults ? "中獎名單" : "中獎者";
+  dialog.classList.toggle("has-flip-results", isFlipReveal);
+  $("#public-live-phase").textContent = isFlipReveal ? "翻牌揭曉" : (hasMultipleResults ? "中獎名單" : "中獎者");
   $("#public-live-prize").textContent = live?.prize_name || draws[0]?.prize_name || "抽獎完成";
-  $("#public-live-roller").textContent = hasMultipleResults ? "" : (labels[0] || "抽獎完成");
-  $("#public-live-results").innerHTML = (hasMultipleResults ? labels : [])
+  $("#public-live-roller").textContent = isFlipReveal || hasMultipleResults ? "" : (labels[0] || "抽獎完成");
+  $("#public-live-results").innerHTML = (!isFlipReveal && hasMultipleResults ? labels : [])
     .map((label, index) => `<div class="draw-result-item" style="animation-delay: ${index * 0.06}s">${escapeHtml(label)}</div>`)
     .join("");
+  flipResults.innerHTML = isFlipReveal ? window.ROOC_DRAW_ANIMATION.renderFlipCards(draws, {
+    prizeName: live?.prize_name || draws[0]?.prize_name || "抽獎完成"
+  }, escapeHtml) : "";
+  flipResults.classList.toggle("is-dense", isFlipReveal && window.ROOC_DRAW_ANIMATION.isDenseFlip(draws.length));
+  if (publicState.liveAnimationMode === "fireworks" && !publicState.liveFireworks) {
+    startPublicLiveFireworks();
+  }
+  launchPublicLiveFireworks(labels.length || live?.draw_count || draws.length);
+  window.ROOC_DRAW_ANIMATION.launchConfetti(labels.length || live?.draw_count || draws.length);
+  schedulePublicLiveEffectCleanup();
   refreshIcons();
 }
 
@@ -503,13 +601,16 @@ function revealPublicLiveFailure(live) {
   }
 
   stopPublicLiveRoller();
+  clearPublicLiveEffectCleanup();
+  stopPublicLiveFireworks();
   const dialog = $("#public-live-dialog");
   dialog.classList.add("is-revealed");
-  dialog.classList.remove("has-multiple-results");
+  dialog.classList.remove("has-multiple-results", "has-flip-results");
   $("#public-live-phase").textContent = "抽獎未完成";
   $("#public-live-prize").textContent = live.prize_name || "抽獎";
   $("#public-live-roller").textContent = live.error_message || "請等待管理員重新操作";
   $("#public-live-results").innerHTML = "";
+  $("#public-live-flip-results").innerHTML = "";
   publicState.lastLiveResultKey = failureKey;
   refreshIcons();
 }
@@ -517,12 +618,16 @@ function revealPublicLiveFailure(live) {
 function closePublicLiveDialog() {
   const dialog = $("#public-live-dialog");
   stopPublicLiveRoller();
+  clearPublicLiveEffectCleanup();
+  stopPublicLiveFireworks();
   if (dialog.open) {
     dialog.close();
   }
-  dialog.classList.remove("is-revealed", "has-multiple-results");
-  clearPublicAnimationModeClasses(dialog);
+  dialog.classList.remove("is-revealed", "has-multiple-results", "has-flip-results");
+  window.ROOC_DRAW_ANIMATION.clearVisualModeClasses(dialog);
+  window.ROOC_DRAW_ANIMATION.clearRevealModeClasses(dialog);
   publicState.liveDialogId = "";
+  publicState.liveAnimationChoice = null;
 }
 
 function stopPublicLiveRoller() {
@@ -553,22 +658,50 @@ function buildPublicLiveRollerLabels() {
 }
 
 function publicDrawResultLabel(draw) {
-  if (!draw) return "";
-  return memberPlainText(draw.drawn_member_no, draw.drawn_role_name);
+  return window.ROOC_DRAW_ANIMATION.resultLabel(draw);
 }
 
-function pickPublicAnimationMode() {
-  const pool = PUBLIC_DRAW_ANIMATION_MODES.filter((mode) => mode !== publicState.lastAnimationMode);
-  const options = pool.length > 0 ? pool : PUBLIC_DRAW_ANIMATION_MODES;
-  const mode = options[Math.floor(Math.random() * options.length)] || "fireworks";
-  publicState.lastAnimationMode = mode;
-  return mode;
+function startPublicLiveFireworks() {
+  if (prefersReducedMotion()) return;
+
+  const container = $("#public-live-fireworks-layer");
+  if (!container) return;
+
+  stopPublicLiveFireworks();
+  try {
+    publicState.liveFireworks = window.ROOC_DRAW_ANIMATION.createFireworks(container);
+    publicState.liveFireworks?.start();
+  } catch {
+    stopPublicLiveFireworks();
+  }
 }
 
-function clearPublicAnimationModeClasses(dialog) {
-  PUBLIC_DRAW_ANIMATION_MODES.forEach((mode) => {
-    dialog.classList.remove(`mode-${mode}`);
-  });
+function launchPublicLiveFireworks(resultCount) {
+  if (publicState.liveAnimationMode !== "fireworks" || prefersReducedMotion()) return;
+  window.ROOC_DRAW_ANIMATION.launchFireworks(publicState.liveFireworks, resultCount);
+}
+
+function schedulePublicLiveEffectCleanup() {
+  clearPublicLiveEffectCleanup();
+  if (publicState.liveAnimationMode !== "fireworks") return;
+
+  publicState.liveEffectCleanupId = window.setTimeout(() => {
+    publicState.liveEffectCleanupId = null;
+    stopPublicLiveFireworks();
+  }, PUBLIC_DRAW_EFFECT_CLEANUP_MS);
+}
+
+function clearPublicLiveEffectCleanup() {
+  if (!publicState.liveEffectCleanupId) return;
+  window.clearTimeout(publicState.liveEffectCleanupId);
+  publicState.liveEffectCleanupId = null;
+}
+
+function stopPublicLiveFireworks() {
+  clearPublicLiveEffectCleanup();
+  const fireworks = publicState.liveFireworks;
+  publicState.liveFireworks = null;
+  window.ROOC_DRAW_ANIMATION.stopFireworks(fireworks, $("#public-live-fireworks-layer"));
 }
 
 function prefersReducedMotion() {
@@ -835,10 +968,30 @@ function renderAuditContent(draw, verification) {
   }
 
   const providerExcluded = audit.provider_excluded ? 1 : 0;
-  const selectedMember = audit.eligible_members.find((member) => Number(member.position) === Number(audit.selected_index));
-  const verifiedClass = verification.status === "passed" ? "is-passed" : verification.status === "failed" ? "is-failed" : "";
-  const verifiedIcon = verification.status === "passed" ? "circle-check" : verification.status === "failed" ? "circle-alert" : "loader";
-  const verifiedTitle = verification.status === "passed" ? "瀏覽器重算通過" : verification.status === "failed" ? "瀏覽器重算失敗" : "正在重算驗證";
+  const eligibleMembers = asArray(audit.eligible_members);
+  const selectedMember = eligibleMembers.find((member) => Number(member.position) === Number(audit.selected_index));
+  const hasFullSnapshot = canVerifyDrawAudit(draw, audit);
+  const verifiedClass = verification.status === "passed"
+    ? "is-passed"
+    : verification.status === "failed"
+      ? "is-failed"
+      : verification.status === "warning"
+        ? "is-warning"
+        : "";
+  const verifiedIcon = verification.status === "passed"
+    ? "circle-check"
+    : verification.status === "failed"
+      ? "circle-alert"
+      : verification.status === "warning"
+        ? "triangle-alert"
+        : "loader";
+  const verifiedTitle = verification.status === "passed"
+    ? "瀏覽器重算通過"
+    : verification.status === "failed"
+      ? "瀏覽器重算失敗"
+      : verification.status === "warning"
+        ? "驗證資料不足"
+        : "正在重算驗證";
   const verifiedMessage = verification.message || "正在用公開 seed、名單 Hash 與 SHA-256 重新計算中獎位置。";
 
   body.innerHTML = `
@@ -853,39 +1006,53 @@ function renderAuditContent(draw, verification) {
     <section class="audit-section">
       <h4>機率公式</h4>
       <div class="audit-grid">
-        <div><span>公會中成員</span><strong>${escapeHtml(audit.active_member_count)}</strong></div>
-        <div><span>已排除</span><strong>${escapeHtml(audit.excluded_count_before)}</strong></div>
+        <div><span>公會中成員</span><strong>${escapeHtml(displayAuditValue(audit.active_member_count))}</strong></div>
+        <div><span>已排除</span><strong>${escapeHtml(displayAuditValue(audit.excluded_count_before))}</strong></div>
         <div><span>提供者排除</span><strong>${providerExcluded}</strong></div>
-        <div><span>可抽人數</span><strong>${escapeHtml(audit.eligible_count)}</strong></div>
+        <div><span>可抽人數</span><strong>${escapeHtml(displayAuditValue(audit.eligible_count))}</strong></div>
       </div>
-      <p class="description">可抽人數 = 公會中 ${escapeHtml(audit.active_member_count)} - 已排除 ${escapeHtml(audit.excluded_count_before)} - 提供者排除 ${providerExcluded} = ${escapeHtml(audit.eligible_count)}</p>
-      <p class="description">本次第 ${escapeHtml(audit.round_index)} 抽的單步機率 = 1 / ${escapeHtml(audit.eligible_count)} = ${escapeHtml(formatPercent(audit.step_probability))}；本輪一次抽出 ${escapeHtml(audit.round_draw_count)} 位，開抽時每人本輪機率約 ${escapeHtml(formatPercent(audit.round_probability))}。</p>
+      ${audit.active_member_count !== "" && audit.excluded_count_before !== ""
+        ? `<p class="description">可抽人數 = 公會中 ${escapeHtml(audit.active_member_count)} - 已排除 ${escapeHtml(audit.excluded_count_before)} - 提供者排除 ${providerExcluded} = ${escapeHtml(displayAuditValue(audit.eligible_count))}</p>`
+        : ""}
+      <p class="description">本次第 ${escapeHtml(displayAuditValue(audit.round_index))} 抽的單步機率 = 1 / ${escapeHtml(displayAuditValue(audit.eligible_count))} = ${escapeHtml(formatPercent(audit.step_probability))}；本輪一次抽出 ${escapeHtml(displayAuditValue(audit.round_draw_count))} 位，開抽時每人本輪機率約 ${escapeHtml(formatPercent(audit.round_probability))}。</p>
     </section>
 
-    <section class="audit-section">
-      <h4>Hash 驗證</h4>
-      <div class="hash-list">
-        <div><span>演算法</span><code>${escapeHtml(audit.algorithm)}</code></div>
-        <div><span>Random Seed</span><code>${escapeHtml(audit.random_seed)}</code></div>
-        <div><span>名單 Hash</span><code>${escapeHtml(audit.eligible_manifest_hash)}</code></div>
-        <div><span>結果 Hash</span><code>${escapeHtml(audit.selector_hash)}</code></div>
-        <div><span>抽中位置</span><code>#${escapeHtml(audit.selected_index)} / ${escapeHtml(audit.eligible_count)}</code></div>
-        <div><span>位置對應</span><code>${escapeHtml(memberPlainText(selectedMember?.member_no, selectedMember?.role_name))}</code></div>
-      </div>
-    </section>
+    ${hasFullSnapshot ? `
+      <section class="audit-section">
+        <h4>Hash 驗證</h4>
+        <div class="hash-list">
+          <div><span>演算法</span><code>${escapeHtml(audit.algorithm)}</code></div>
+          <div><span>Random Seed</span><code>${escapeHtml(audit.random_seed)}</code></div>
+          <div><span>名單 Hash</span><code>${escapeHtml(audit.eligible_manifest_hash)}</code></div>
+          <div><span>結果 Hash</span><code>${escapeHtml(audit.selector_hash)}</code></div>
+          <div><span>抽中位置</span><code>#${escapeHtml(audit.selected_index)} / ${escapeHtml(audit.eligible_count)}</code></div>
+          <div><span>位置對應</span><code>${escapeHtml(memberPlainText(selectedMember?.member_no, selectedMember?.role_name))}</code></div>
+        </div>
+      </section>
 
-    <section class="audit-section">
-      <h4>當下可抽名單快照</h4>
-      <div class="eligible-list">
-        ${audit.eligible_members.map((member) => `
-          <div class="${Number(member.position) === Number(audit.selected_index) ? "is-selected" : ""}">
-            <span>#${escapeHtml(member.position)}</span>
-            <strong>${escapeHtml(memberPlainText(member.member_no, member.role_name))}</strong>
-            <small>${escapeHtml(member.occupation || "未填職業")}</small>
-          </div>
-        `).join("")}
-      </div>
-    </section>
+      <section class="audit-section">
+        <h4>當下可抽名單快照</h4>
+        <div class="eligible-list">
+          ${eligibleMembers.map((member) => `
+            <div class="${Number(member.position) === Number(audit.selected_index) ? "is-selected" : ""}">
+              <span>#${escapeHtml(member.position)}</span>
+              <strong>${escapeHtml(memberPlainText(member.member_no, member.role_name))}</strong>
+              <small>${escapeHtml(member.occupation || "未填職業")}</small>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    ` : `
+      <section class="audit-section">
+        <h4>基礎驗證資料</h4>
+        <div class="hash-list">
+          <div><span>Random Token</span><code>${escapeHtml(audit.random_seed || "-")}</code></div>
+          <div><span>名單 Hash</span><code>${escapeHtml(audit.eligible_manifest_hash || "-")}</code></div>
+          <div><span>抽中位置</span><code>#${escapeHtml(displayAuditValue(audit.selected_index))} / ${escapeHtml(displayAuditValue(audit.eligible_count))}</code></div>
+        </div>
+        <p class="description">這筆資料缺少完整可抽名單或結果 Hash，因此目前只能顯示機率與基礎公開紀錄，不能在瀏覽器完整重算 Hash。</p>
+      </section>
+    `}
   `;
   refreshIcons();
 }
@@ -894,6 +1061,10 @@ async function verifyDrawAudit(draw) {
   const audit = draw.audit;
   if (!audit) {
     return { status: "failed", message: "這筆紀錄沒有公平快照。" };
+  }
+
+  if (!canVerifyDrawAudit(draw, audit)) {
+    return { status: "warning", message: "這筆紀錄有機率資料，但缺少完整可抽名單或結果 Hash，無法做瀏覽器端完整重算。" };
   }
 
   if (!window.crypto?.subtle) {
@@ -905,13 +1076,27 @@ async function verifyDrawAudit(draw) {
     return { status: "failed", message: "名單 Hash 不一致，當下可抽名單可能已被改動。" };
   }
 
-  const selectorInput = `${audit.random_seed}:${draw.event_id}:${draw.prize_id}:${draw.slot_number}:${audit.eligible_manifest_hash}`;
-  const selectorHash = await sha256Hex(selectorInput);
-  if (selectorHash !== audit.selector_hash) {
-    return { status: "failed", message: "結果 Hash 不一致，seed 或抽獎資料可能不一致。" };
+  const auditMeta = resolveDrawAuditMeta(draw);
+  if (!auditMeta.eventId || !auditMeta.prizeId || !auditMeta.slotNumber) {
+    return { status: "warning", message: "這筆紀錄缺少活動、獎項或抽獎格次識別資料，無法做瀏覽器端完整重算。" };
   }
 
-  const index = Number(BigInt(`0x${selectorHash.slice(0, 12)}`) % BigInt(audit.eligible_count)) + 1;
+  const selectorInput = `${audit.random_seed}:${auditMeta.eventId}:${auditMeta.prizeId}:${auditMeta.slotNumber}:${audit.eligible_manifest_hash}`;
+  const selectorHash = await sha256Hex(selectorInput);
+  let index = Number(BigInt(`0x${selectorHash.slice(0, 12)}`) % BigInt(audit.eligible_count)) + 1;
+  let verificationNote = "";
+
+  if (selectorHash !== audit.selector_hash) {
+    const legacySelectorHash = await sha256Hex(audit.random_seed);
+    const isLegacyRandomizedFirstDraw = legacySelectorHash === audit.selector_hash && Number(audit.selected_index) === 1;
+    if (!isLegacyRandomizedFirstDraw) {
+      return { status: "failed", message: "結果 Hash 不一致，seed 或抽獎資料可能不一致。" };
+    }
+
+    index = 1;
+    verificationNote = "這筆是舊版測試抽獎紀錄，結果 Hash 使用 SHA-256(Random Seed)，快照第一位即為抽中者。";
+  }
+
   if (index !== Number(audit.selected_index)) {
     return { status: "failed", message: `重算位置是 #${index}，與紀錄 #${audit.selected_index} 不一致。` };
   }
@@ -923,8 +1108,35 @@ async function verifyDrawAudit(draw) {
 
   return {
     status: "passed",
-    message: `重算結果為 #${index} ${memberPlainText(selectedMember.member_no, selectedMember.role_name)}，與抽獎紀錄一致。`
+    message: `${verificationNote ? `${verificationNote} ` : ""}重算結果為 #${index} ${memberPlainText(selectedMember.member_no, selectedMember.role_name)}，與抽獎紀錄一致。`
   };
+}
+
+function resolveDrawAuditMeta(draw) {
+  return {
+    eventId: draw?.event_id || publicState.event?.id || "",
+    prizeId: draw?.prize_id || "",
+    slotNumber: draw?.slot_number ?? ""
+  };
+}
+
+function canVerifyDrawAudit(draw, audit) {
+  const auditMeta = resolveDrawAuditMeta(draw);
+  return Boolean(
+    audit?.random_seed
+    && audit?.eligible_manifest
+    && audit?.eligible_manifest_hash
+    && audit?.selector_hash
+    && audit?.eligible_count
+    && auditMeta.eventId
+    && auditMeta.prizeId
+    && auditMeta.slotNumber !== ""
+    && asArray(audit?.eligible_members).length > 0
+  );
+}
+
+function displayAuditValue(value) {
+  return value === "" || value == null ? "-" : value;
 }
 
 async function sha256Hex(text) {

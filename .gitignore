@@ -2,3 +2,6 @@
 .codex/
 .env
 config.local.js
+node_modules/
+dist/
+.vite/

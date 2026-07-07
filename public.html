@@ -9,6 +9,8 @@
     <script src="config.js"></script>
     <script src="shared.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/fireworks-js@2.10.8/dist/index.umd.js"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script defer src="public.js"></script>
   </head>
@@ -234,6 +236,7 @@
             <i data-lucide="x"></i>
           </button>
           <div class="draw-animation-stage public-live-stage" aria-live="polite">
+            <div class="fireworks-layer" id="public-live-fireworks-layer" aria-hidden="true"></div>
             <div class="draw-portal" aria-hidden="true">
               <span></span>
               <span></span>
@@ -251,6 +254,7 @@
             <h3 id="public-live-prize">等待抽獎</h3>
             <div class="draw-roller" id="public-live-roller">ROOC</div>
             <div class="draw-result-list" id="public-live-results"></div>
+            <div class="draw-flip-list" id="public-live-flip-results"></div>
             <div class="draw-progress" aria-hidden="true"><span></span></div>
           </div>
         </div>
