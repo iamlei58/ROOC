@@ -158,30 +158,7 @@ function renderConnection(connected) {
 }
 
 async function loadOptionalLocalConfig() {
-  if (window.ROOC_CONFIG?.loadOptionalLocalConfig) {
-    await window.ROOC_CONFIG.loadOptionalLocalConfig();
-    return;
-  }
-
-  const runtime = window.ROOC_SUPABASE_CONFIG || {};
-  const productionRuntime = runtime.environments?.production || runtime;
-  if (productionRuntime.url && productionRuntime.anonKey) return;
-
-  try {
-    await loadScript("config.local.js");
-  } catch {
-    // Local config is optional. Deployment config is generated into config.js.
-  }
-}
-
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
+  await window.ROOC_CONFIG?.loadOptionalLocalConfig?.();
 }
 
 function resolveSupabaseEnvironment() {
@@ -957,7 +934,7 @@ function renderAwardRows() {
 }
 
 function renderDrawRows() {
-  const rows = publicState.event.draws || [];
+  const rows = sortPublicDrawRows(publicState.event.draws || []);
   const visibleRows = rows.slice(0, PUBLIC_TABLE_RENDER_LIMIT);
   const signature = `${rows.length}:${publicRowsSignature(visibleRows, ["id", "status", "final_member_no", "updated_at", "resolved_at"])}`;
   if (!shouldRenderPublicTable("draws", signature)) return;
@@ -978,6 +955,23 @@ function publicDrawStatusText(draw) {
   }
 
   return drawStatusText[draw.status] || draw.status;
+}
+
+function sortPublicDrawRows(rows) {
+  return asArray(rows)
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.row?.created_at || "") || 0;
+      const rightTime = Date.parse(right.row?.created_at || "") || 0;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+
+      const leftSlot = Number(left.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      const rightSlot = Number(right.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      if (leftSlot !== rightSlot) return leftSlot - rightSlot;
+
+      return left.index - right.index;
+    })
+    .map((item) => item.row);
 }
 
 function handleDrawVerifyClick(event) {

@@ -4,6 +4,7 @@ import "../shared/admin-stats.js";
 import "../shared/admin-tables.js";
 import "../shared/admin-event-header.js";
 import "../shared/admin-tabs.js";
+import "../shared/audit-shell.js";
 import "../shared/confirm-dialog.js";
 import "../shared/connection-pill.js";
 import "../shared/draw-odds.js";

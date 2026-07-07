@@ -173,11 +173,11 @@ defineProps({
       <td>{{ row.result }}</td>
       <td>{{ row.probability }}</td>
       <td>
-        <a
+        <button
           class="btn table-action"
-          :href="row.verifyUrl"
-          target="_blank"
-          rel="noopener"
+          type="button"
+          :data-verify-draw="row.drawId"
+          :disabled="!row.canVerify"
         >
           <svg
             viewBox="0 0 24 24"
@@ -192,7 +192,7 @@ defineProps({
             <path d="m9 12 2 2 4-4" />
           </svg>
           <span>驗證</span>
-        </a>
+        </button>
       </td>
     </tr>
   </template>

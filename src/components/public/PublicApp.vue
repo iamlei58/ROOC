@@ -1,5 +1,5 @@
 <script setup>
-import LegacyBridge from "../LegacyBridge.vue";
+import { onMounted } from "vue";
 import DrawAnimationDialogContent from "../draw/DrawAnimationDialogContent.vue";
 import EmptyState from "../shared/EmptyState.vue";
 import EventLoadToolbarContent from "../shared/EventLoadToolbarContent.vue";
@@ -7,11 +7,17 @@ import HeroHeader from "../shared/HeroHeader.vue";
 import PanelHead from "../shared/PanelHead.vue";
 import TableHeadBar from "../shared/TableHeadBar.vue";
 import PublicFairnessNote from "./PublicFairnessNote.vue";
+
+onMounted(() => {
+  window.dispatchEvent(new CustomEvent("rooc:vue-ready", {
+    detail: {
+      page: "public"
+    }
+  }));
+});
 </script>
 
 <template>
-  <LegacyBridge page="public" />
-
   <main class="app-shell public-shell">
     <header class="hero public-hero">
       <HeroHeader

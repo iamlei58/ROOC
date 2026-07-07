@@ -1,5 +1,5 @@
 <script setup>
-import LegacyBridge from "../LegacyBridge.vue";
+import { onMounted } from "vue";
 import DrawAnimationDialogContent from "../draw/DrawAnimationDialogContent.vue";
 import EmptyState from "../shared/EmptyState.vue";
 import EventLoadToolbarContent from "../shared/EventLoadToolbarContent.vue";
@@ -32,11 +32,17 @@ const addPrizeAction = [
     className: "btn secondary"
   }
 ];
+
+onMounted(() => {
+  window.dispatchEvent(new CustomEvent("rooc:vue-ready", {
+    detail: {
+      page: "admin"
+    }
+  }));
+});
 </script>
 
 <template>
-  <LegacyBridge page="admin" />
-
   <main class="app-shell">
     <header class="hero">
       <HeroHeader
@@ -375,6 +381,10 @@ const addPrizeAction = [
     </dialog>
 
     <dialog class="modal roster-modal" id="roster-dialog">
+      <div class="modal-shell"></div>
+    </dialog>
+
+    <dialog class="modal audit-modal" id="audit-dialog">
       <div class="modal-shell"></div>
     </dialog>
 

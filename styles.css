@@ -382,6 +382,11 @@ td .btn.table-action + .btn.table-action {
   border-color: var(--line);
 }
 
+.btn.icon-button .close-mark {
+  width: 20px;
+  height: 20px;
+}
+
 .btn svg,
 .tab svg {
   width: 18px;
@@ -2098,6 +2103,10 @@ tr:last-child td {
   width: min(460px, calc(100% - 28px));
 }
 
+.confirm-modal {
+  width: min(560px, calc(100% - 28px));
+}
+
 .prize-modal {
   width: min(560px, calc(100% - 28px));
   overflow: visible;
@@ -2126,6 +2135,11 @@ tr:last-child td {
   box-shadow: var(--shadow);
 }
 
+.confirm-modal .modal-shell {
+  gap: 18px;
+  padding: 26px;
+}
+
 .prize-modal .modal-shell {
   overflow: visible;
 }
@@ -2139,6 +2153,14 @@ tr:last-child td {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.confirm-modal .modal-head {
+  align-items: center;
+}
+
+.confirm-modal h3 {
+  font-size: 1.22rem;
 }
 
 .modal-form {
@@ -2173,39 +2195,48 @@ tr:last-child td {
 
 .confirm-body {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 14px;
-  align-items: center;
-  padding: 14px;
-  border: 1px solid rgba(194, 65, 58, 0.18);
-  border-radius: 8px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  padding: 2px 4px 8px;
+  border: 0;
+  border-radius: 0;
   color: var(--text);
-  background: rgba(194, 65, 58, 0.06);
+  background: transparent;
 }
 
 .confirm-body p {
   margin: 0;
   color: var(--text);
-  line-height: 1.6;
+  font-size: 0.98rem;
+  line-height: 1.7;
 }
 
 .confirm-icon {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
+  width: 24px;
+  height: 28px;
+  border-radius: 0;
   color: #9a3a34;
-  background: rgba(194, 65, 58, 0.12);
+  background: transparent;
 }
 
 .confirm-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
 }
 
 .confirm-actions {
+  gap: 12px;
   justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 0;
+}
+
+.confirm-actions .btn {
+  min-width: 120px;
+  min-height: 46px;
 }
 
 .import-grid {
@@ -2615,6 +2646,11 @@ tr:last-child td {
     padding: 16px;
   }
 
+  .confirm-modal .modal-shell {
+    gap: 18px;
+    padding: 22px;
+  }
+
   .hash-list div {
     grid-template-columns: 1fr;
   }
@@ -2869,6 +2905,23 @@ tr:last-child td {
 }
 
 @media (max-width: 640px) {
+  .confirm-body {
+    grid-template-columns: 1fr;
+  }
+
+  .confirm-icon {
+    width: 24px;
+    height: 28px;
+  }
+
+  .confirm-actions {
+    justify-content: stretch;
+  }
+
+  .confirm-actions .btn {
+    flex: 1 1 140px;
+  }
+
   .draw-animation-stage {
     min-height: 300px;
     padding: 26px 18px;

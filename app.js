@@ -23,6 +23,8 @@ const state = {
   openEvents: [],
   historyEvents: [],
   historyEvent: null,
+  publicAuditEvents: new Map(),
+  auditDialogSeq: 0,
   providerMembers: [],
   transferCandidates: [],
   transferCandidatesLoading: false,
@@ -180,10 +182,12 @@ function bindForms() {
   $("#delete-event").addEventListener("click", () => deleteLoadedEvent("console"));
   $("#export-awards").addEventListener("click", exportAwardsExcel);
   $("#export-draw-log").addEventListener("click", exportDrawLogExcel);
+  $("#draw-log-table").addEventListener("click", handleAdminDrawVerifyClick);
   $("#history-event-form").addEventListener("submit", handleLoadHistoryEvent);
   $("#refresh-history-events").addEventListener("click", handleRefreshHistoryEvents);
   $("#export-history-awards").addEventListener("click", exportHistoryAwardsExcel);
   $("#export-history-draw-log").addEventListener("click", exportHistoryDrawLogExcel);
+  $("#history-draw-log-table").addEventListener("click", handleAdminDrawVerifyClick);
   $("#delete-history-event").addEventListener("click", () => deleteLoadedEvent("history"));
   $("#change-admin-pin").addEventListener("click", openChangeAdminPinDialog);
   $("#logout-admin").addEventListener("click", handleAdminLogout);
@@ -234,6 +238,7 @@ function bindDialogBackdrops() {
     ["#occupation-dialog", closeOccupationDialog],
     ["#admin-pin-dialog", cancelAdminPinPrompt],
     ["#roster-dialog", closeRosterDialog],
+    ["#audit-dialog", closeAuditDialog],
     ["#confirm-dialog", () => closeConfirmDialog(false)]
   ]);
 
@@ -360,30 +365,7 @@ function renderConnection(connected) {
 }
 
 async function loadOptionalLocalConfig() {
-  if (window.ROOC_CONFIG?.loadOptionalLocalConfig) {
-    await window.ROOC_CONFIG.loadOptionalLocalConfig();
-    return;
-  }
-
-  const runtime = window.ROOC_SUPABASE_CONFIG || {};
-  const productionRuntime = runtime.environments?.production || runtime;
-  if (productionRuntime.url && productionRuntime.anonKey) return;
-
-  try {
-    await loadScript("config.local.js");
-  } catch {
-    // Local config is optional. Deployment config is generated into config.js.
-  }
-}
-
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
+  await window.ROOC_CONFIG?.loadOptionalLocalConfig?.();
 }
 
 function resolveSupabaseEnvironment() {
@@ -1653,7 +1635,7 @@ function renderDrawLog() {
 }
 
 function renderDrawLogRows(selector, draws, emptyMessage, eventSlug = "", options = {}) {
-  const allDraws = asArray(draws);
+  const allDraws = sortDrawRows(draws);
   const limit = Number(options.limit || 0);
   const visibleDraws = limit > 0 ? allDraws.slice(0, limit) : allDraws;
   const hiddenCount = Math.max(allDraws.length - visibleDraws.length, 0);
@@ -1710,12 +1692,13 @@ function buildAdminAwardTableRows(awards) {
 function buildAdminDrawTableRows(draws, eventSlug = "") {
   return draws.map((draw, index) => ({
     id: draw.id || `admin-draw-row-${index}`,
+    drawId: draw.id || "",
     prizeName: draw.prize_name || "",
     provider: draw.provider || "",
     drawnMember: memberPlainText(draw.drawn_member_no, draw.drawn_role_name),
     result: drawLogResultText(draw),
     probability: formatPercent(draw.step_probability),
-    verifyUrl: buildPublicVerifyUrl(eventSlug, draw.id)
+    canVerify: Boolean(draw.id && eventSlug)
   }));
 }
 
@@ -1735,6 +1718,269 @@ function buildPublicVerifyUrl(eventSlug, drawId = "") {
     url.searchParams.set("env", state.environmentState.current.id);
   }
   return `${url.pathname}${url.search}`;
+}
+
+function handleAdminDrawVerifyClick(event) {
+  const button = event.target.closest("[data-verify-draw]");
+  if (!button) return;
+
+  event.preventDefault();
+  const context = resolveAdminDrawVerifyContext(button);
+  if (!context.draw || !context.event) {
+    showToast("找不到這筆抽獎紀錄。", "error");
+    return;
+  }
+
+  openAuditDialog(context.draw, context.event);
+}
+
+function resolveAdminDrawVerifyContext(button) {
+  const tableBody = button.closest("tbody");
+  const targetEvent = tableBody?.id === "history-draw-log-table"
+    ? state.historyEvent
+    : state.event;
+  const drawId = button.dataset.verifyDraw || "";
+  const draw = asArray(targetEvent?.recent_draws).find((item) => item.id === drawId);
+  return { event: targetEvent, draw };
+}
+
+function openAuditDialog(draw, targetEvent) {
+  const dialog = $("#audit-dialog");
+  const fallbackDraw = normalizeAuditDraw(draw, targetEvent);
+  const requestSeq = state.auditDialogSeq + 1;
+  state.auditDialogSeq = requestSeq;
+
+  renderAuditContent(fallbackDraw, { status: "checking" });
+  showModalDialog(dialog);
+  refreshIcons();
+
+  void loadFullAuditDraw(draw, targetEvent)
+    .then(async (fullDraw) => {
+      const verification = await verifyDrawAudit(fullDraw);
+      if (requestSeq !== state.auditDialogSeq || !dialog.open) return;
+      renderAuditContent(fullDraw, verification);
+    })
+    .catch((error) => {
+      if (requestSeq !== state.auditDialogSeq || !dialog.open) return;
+      renderAuditContent(fallbackDraw, {
+        status: "failed",
+        message: friendlyError(error.message)
+      });
+    });
+}
+
+function closeAuditDialog() {
+  state.auditDialogSeq += 1;
+  closeModalDialog($("#audit-dialog"));
+}
+
+function renderAuditContent(draw, verification) {
+  const audit = draw.audit;
+  const title = `${draw.prize_name || "未命名獎項"} / ${memberPlainText(draw.drawn_member_no, draw.drawn_role_name)}`;
+  window.ROOC_VUE_AUDIT_SHELL?.render?.({
+    targetSelector: "#audit-dialog .modal-shell",
+    title,
+    draw,
+    verification,
+    hasFullSnapshot: audit ? canVerifyDrawAudit(draw, audit) : false,
+    helpers: {
+      displayAuditValue,
+      formatPercent,
+      memberPlainText
+    },
+    onClose: closeAuditDialog
+  });
+  refreshIcons();
+}
+
+async function loadFullAuditDraw(draw, targetEvent) {
+  const fallbackDraw = normalizeAuditDraw(draw, targetEvent);
+  const slug = targetEvent?.slug || "";
+  if (!slug || !draw?.id) return fallbackDraw;
+
+  let publicEvent = await fetchPublicAuditEvent(slug);
+  let publicDraw = publicEvent.draws.find((item) => item.id === draw.id);
+
+  if (!publicDraw) {
+    publicEvent = await fetchPublicAuditEvent(slug, { force: true });
+    publicDraw = publicEvent.draws.find((item) => item.id === draw.id);
+  }
+
+  return publicDraw || fallbackDraw;
+}
+
+async function fetchPublicAuditEvent(slug, options = {}) {
+  const cleanSlug = cleanRequired(slug, "請選擇活動。");
+  const environmentId = state.environmentState?.current?.id || "default";
+  const cacheKey = `${environmentId}:${cleanSlug}`;
+
+  if (!options.force && state.publicAuditEvents.has(cacheKey)) {
+    return state.publicAuditEvents.get(cacheKey);
+  }
+
+  const rows = await rpc("get_public_raffle_event", {
+    p_slug: cleanSlug
+  });
+
+  if (!rows || rows.length === 0) {
+    throw new Error("找不到活動。");
+  }
+
+  const publicEvent = normalizeAuditEvent(rows[0]);
+  state.publicAuditEvents.set(cacheKey, publicEvent);
+  return publicEvent;
+}
+
+function normalizeAuditEvent(event) {
+  return {
+    ...event,
+    draws: asArray(event.draws).map((draw) => normalizeAuditDraw(draw, event))
+  };
+}
+
+function normalizeAuditDraw(draw, targetEvent = {}) {
+  const source = draw && typeof draw === "object" ? draw : {};
+  const normalized = { ...source };
+  if (!normalized.event_id && targetEvent?.id) {
+    normalized.event_id = targetEvent.id;
+  }
+
+  if (source.audit && typeof source.audit === "object") {
+    normalized.audit = normalizeAuditSnapshot(source.audit, source);
+    return normalized;
+  }
+
+  const hasFlatAudit = [
+    "step_probability",
+    "round_probability",
+    "eligible_count",
+    "selected_index",
+    "eligible_manifest_hash",
+    "random_seed",
+    "random_token"
+  ].some((key) => source[key] != null);
+
+  if (hasFlatAudit) {
+    normalized.audit = normalizeAuditSnapshot(source, source);
+  }
+
+  return normalized;
+}
+
+function normalizeAuditSnapshot(audit, draw = {}) {
+  const source = audit && typeof audit === "object" ? audit : {};
+  const eligibleMembers = asArray(source.eligible_members);
+
+  return {
+    id: source.id || source.audit_id || "",
+    algorithm: source.algorithm || (source.selector_hash ? "sha256" : ""),
+    round_id: source.round_id || "",
+    round_draw_count: source.round_draw_count ?? 1,
+    round_index: source.round_index ?? draw.slot_number ?? source.selected_index ?? "",
+    active_member_count: source.active_member_count ?? "",
+    excluded_count_before: source.excluded_count_before ?? "",
+    provider_excluded: Boolean(source.provider_excluded),
+    eligible_count: source.eligible_count ?? "",
+    step_probability: source.step_probability ?? "",
+    round_probability: source.round_probability ?? source.step_probability ?? "",
+    prize_remaining_before: source.prize_remaining_before ?? "",
+    random_seed: source.random_seed || source.random_token || "",
+    eligible_manifest: source.eligible_manifest || "",
+    eligible_manifest_hash: source.eligible_manifest_hash || "",
+    selector_hash: source.selector_hash || "",
+    selected_index: source.selected_index ?? "",
+    eligible_members: eligibleMembers
+  };
+}
+
+async function verifyDrawAudit(draw) {
+  const audit = draw.audit;
+  if (!audit) {
+    return { status: "failed", message: "這筆紀錄沒有公平快照。" };
+  }
+
+  if (!canVerifyDrawAudit(draw, audit)) {
+    return { status: "warning", message: "這筆紀錄有機率資料，但缺少完整可抽名單或結果 Hash，無法做瀏覽器端完整重算。" };
+  }
+
+  if (!window.crypto?.subtle) {
+    return { status: "failed", message: "目前瀏覽器不支援 Web Crypto，無法在本機重算 SHA-256。" };
+  }
+
+  const manifestHash = await sha256Hex(audit.eligible_manifest);
+  if (manifestHash !== audit.eligible_manifest_hash) {
+    return { status: "failed", message: "名單 Hash 不一致，當下可抽名單可能已被改動。" };
+  }
+
+  const auditMeta = resolveDrawAuditMeta(draw);
+  if (!auditMeta.eventId || !auditMeta.prizeId || !auditMeta.slotNumber) {
+    return { status: "warning", message: "這筆紀錄缺少活動、獎項或抽獎格次識別資料，無法做瀏覽器端完整重算。" };
+  }
+
+  const selectorInput = `${audit.random_seed}:${auditMeta.eventId}:${auditMeta.prizeId}:${auditMeta.slotNumber}:${audit.eligible_manifest_hash}`;
+  const selectorHash = await sha256Hex(selectorInput);
+  let index = Number(BigInt(`0x${selectorHash.slice(0, 12)}`) % BigInt(audit.eligible_count)) + 1;
+  let verificationNote = "";
+
+  if (selectorHash !== audit.selector_hash) {
+    const legacySelectorHash = await sha256Hex(audit.random_seed);
+    const isLegacyRandomizedFirstDraw = legacySelectorHash === audit.selector_hash && Number(audit.selected_index) === 1;
+    if (!isLegacyRandomizedFirstDraw) {
+      return { status: "failed", message: "結果 Hash 不一致，seed 或抽獎資料可能不一致。" };
+    }
+
+    index = 1;
+    verificationNote = "這筆是舊版測試抽獎紀錄，結果 Hash 使用 SHA-256(Random Seed)，快照第一位即為抽中者。";
+  }
+
+  if (index !== Number(audit.selected_index)) {
+    return { status: "failed", message: `重算位置是 #${index}，與紀錄 #${audit.selected_index} 不一致。` };
+  }
+
+  const selectedMember = audit.eligible_members.find((member) => Number(member.position) === index);
+  if (!selectedMember || selectedMember.member_no !== draw.drawn_member_no) {
+    return { status: "failed", message: "重算位置對應的成員與抽中者不一致。" };
+  }
+
+  return {
+    status: "passed",
+    message: `${verificationNote ? `${verificationNote} ` : ""}重算結果為 #${index} ${memberPlainText(selectedMember.member_no, selectedMember.role_name)}，與抽獎紀錄一致。`
+  };
+}
+
+function resolveDrawAuditMeta(draw) {
+  return {
+    eventId: draw?.event_id || "",
+    prizeId: draw?.prize_id || "",
+    slotNumber: draw?.slot_number ?? ""
+  };
+}
+
+function canVerifyDrawAudit(draw, audit) {
+  const auditMeta = resolveDrawAuditMeta(draw);
+  return Boolean(
+    audit?.random_seed
+    && audit?.eligible_manifest
+    && audit?.eligible_manifest_hash
+    && audit?.selector_hash
+    && audit?.eligible_count
+    && auditMeta.eventId
+    && auditMeta.prizeId
+    && auditMeta.slotNumber !== ""
+    && asArray(audit?.eligible_members).length > 0
+  );
+}
+
+function displayAuditValue(value) {
+  return value === "" || value == null ? "-" : value;
+}
+
+async function sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text ?? ""));
+  const hash = await window.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function handleAddPrize(event) {
@@ -2007,13 +2253,13 @@ function sortDrawRows(rows) {
   return asArray(rows)
     .map((row, index) => ({ row, index }))
     .sort((left, right) => {
-      const leftSlot = Number(left.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
-      const rightSlot = Number(right.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
-      if (leftSlot !== rightSlot) return leftSlot - rightSlot;
-
       const leftTime = Date.parse(left.row?.created_at || "") || 0;
       const rightTime = Date.parse(right.row?.created_at || "") || 0;
       if (leftTime !== rightTime) return leftTime - rightTime;
+
+      const leftSlot = Number(left.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      const rightSlot = Number(right.row?.slot_number ?? Number.MAX_SAFE_INTEGER);
+      if (leftSlot !== rightSlot) return leftSlot - rightSlot;
 
       return left.index - right.index;
     })
@@ -3248,7 +3494,7 @@ function exportEventAwardsExcel(event) {
 }
 
 function exportEventDrawLogExcel(event) {
-  const rows = asArray(event.recent_draws);
+  const rows = sortDrawRows(event.recent_draws);
   if (rows.length === 0) {
     showToast("目前沒有抽獎紀錄可匯出。", "error");
     return;
