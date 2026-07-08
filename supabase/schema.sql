@@ -44,6 +44,64 @@ from (
 ) existing_occupations
 on conflict on constraint rooc_occupations_name_key do nothing;
 
+create table if not exists public.guide_posts (
+  id uuid primary key default extensions.gen_random_uuid(),
+  slug text not null unique,
+  title text not null,
+  category text not null default '一般',
+  summary text,
+  content text not null default '',
+  status text not null default 'draft' check (status in ('draft', 'published')),
+  is_pinned boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  published_at timestamptz,
+  check (char_length(slug) between 3 and 96),
+  check (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
+  check (char_length(title) between 1 and 160),
+  check (char_length(category) between 1 and 80),
+  check (summary is null or char_length(summary) <= 500)
+);
+
+create table if not exists public.guide_image_upload_paths (
+  object_path text primary key,
+  original_name text,
+  content_type text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  check (char_length(object_path) between 16 and 260),
+  check (content_type in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'))
+);
+
+create table if not exists public.guide_image_delete_paths (
+  object_path text primary key,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  check (char_length(object_path) between 16 and 260)
+);
+
+do $$
+begin
+  if to_regclass('storage.buckets') is not null then
+    execute $storage$
+      insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+      values (
+        'rooc-guide-images',
+        'rooc-guide-images',
+        true,
+        5242880,
+        array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+      )
+      on conflict (id) do update
+      set
+        public = excluded.public,
+        file_size_limit = excluded.file_size_limit,
+        allowed_mime_types = excluded.allowed_mime_types
+    $storage$;
+  end if;
+end;
+$$;
+
 create table if not exists public.raffle_events (
   id uuid primary key default extensions.gen_random_uuid(),
   slug text not null unique,
@@ -187,9 +245,21 @@ create index if not exists raffle_draw_audits_round_idx
 create index if not exists raffle_live_draws_event_status_idx
   on public.raffle_live_draws (event_id, status, updated_at desc);
 
+create index if not exists guide_posts_admin_order_idx
+  on public.guide_posts (updated_at desc);
+
+create index if not exists guide_posts_public_order_idx
+  on public.guide_posts (status, is_pinned desc, updated_at desc, published_at desc);
+
+create index if not exists guide_posts_category_idx
+  on public.guide_posts (category);
+
 alter table public.raffle_app_config enable row level security;
 alter table public.rooc_members enable row level security;
 alter table public.rooc_occupations enable row level security;
+alter table public.guide_posts enable row level security;
+alter table public.guide_image_upload_paths enable row level security;
+alter table public.guide_image_delete_paths enable row level security;
 alter table public.raffle_events enable row level security;
 alter table public.raffle_prizes enable row level security;
 alter table public.raffle_draws enable row level security;
@@ -359,6 +429,573 @@ begin
   where id = true;
 
   return query select true, '管理密碼已更新。';
+end;
+$$;
+
+create or replace function public.list_guide_posts_admin(
+  p_app_admin_pin text,
+  p_query text default null,
+  p_status text default null
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  category text,
+  summary text,
+  content text,
+  status text,
+  is_pinned boolean,
+  created_at timestamptz,
+  updated_at timestamptz,
+  published_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_query text := nullif(trim(p_query), '');
+  v_status text := nullif(trim(p_status), '');
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  return query
+  select
+    g.id,
+    g.slug,
+    g.title,
+    g.category,
+    g.summary,
+    g.content,
+    g.status,
+    g.is_pinned,
+    g.created_at,
+    g.updated_at,
+    g.published_at
+  from public.guide_posts g
+  where (v_status is null or g.status = v_status)
+    and (
+      v_query is null
+      or g.title ilike '%' || v_query || '%'
+      or g.category ilike '%' || v_query || '%'
+      or coalesce(g.summary, '') ilike '%' || v_query || '%'
+      or g.content ilike '%' || v_query || '%'
+    )
+  order by g.is_pinned desc, g.updated_at desc, g.created_at desc;
+end;
+$$;
+
+create or replace function public.upsert_guide_post(
+  p_app_admin_pin text,
+  p_id uuid,
+  p_title text,
+  p_slug text,
+  p_category text,
+  p_summary text,
+  p_content text,
+  p_status text,
+  p_is_pinned boolean default false
+)
+returns table(
+  id uuid,
+  slug text,
+  title text,
+  category text,
+  summary text,
+  content text,
+  status text,
+  is_pinned boolean,
+  created_at timestamptz,
+  updated_at timestamptz,
+  published_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_title text := nullif(trim(p_title), '');
+  v_slug_base text := public.slugify(coalesce(nullif(trim(p_slug), ''), p_title));
+  v_slug text;
+  v_suffix integer := 1;
+  v_category text := coalesce(nullif(trim(p_category), ''), '一般');
+  v_summary text := nullif(trim(p_summary), '');
+  v_content text := coalesce(p_content, '');
+  v_status text := coalesce(nullif(trim(p_status), ''), 'draft');
+  v_existing public.guide_posts%rowtype;
+  v_id uuid;
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  if v_title is null then
+    raise exception '請輸入攻略標題。';
+  end if;
+
+  if v_status not in ('draft', 'published') then
+    raise exception '攻略狀態不正確。';
+  end if;
+
+  if v_slug_base = '' then
+    v_slug_base := 'guide';
+  end if;
+  v_slug_base := trim(both '-' from left(v_slug_base, 88));
+  if char_length(v_slug_base) < 3 then
+    v_slug_base := 'guide-' || v_slug_base;
+  end if;
+  v_slug := v_slug_base;
+
+  while exists (
+    select 1
+    from public.guide_posts g
+    where g.slug = v_slug
+      and (p_id is null or g.id <> p_id)
+  ) loop
+    v_suffix := v_suffix + 1;
+    v_slug := trim(both '-' from left(v_slug_base, 84)) || '-' || v_suffix::text;
+  end loop;
+
+  if p_id is not null then
+    select *
+    into v_existing
+    from public.guide_posts g
+    where g.id = p_id;
+
+    if not found then
+      raise exception '找不到攻略。';
+    end if;
+
+    update public.guide_posts
+    set
+      slug = v_slug,
+      title = v_title,
+      category = v_category,
+      summary = v_summary,
+      content = v_content,
+      status = v_status,
+      is_pinned = coalesce(p_is_pinned, false),
+      updated_at = now(),
+      published_at = case
+        when v_status = 'published' and v_existing.published_at is null then now()
+        when v_status = 'published' then v_existing.published_at
+        else null
+      end
+    where public.guide_posts.id = p_id
+    returning public.guide_posts.id into v_id;
+  else
+    insert into public.guide_posts (
+      slug,
+      title,
+      category,
+      summary,
+      content,
+      status,
+      is_pinned,
+      published_at
+    )
+    values (
+      v_slug,
+      v_title,
+      v_category,
+      v_summary,
+      v_content,
+      v_status,
+      coalesce(p_is_pinned, false),
+      case when v_status = 'published' then now() else null end
+    )
+    returning public.guide_posts.id into v_id;
+  end if;
+
+  return query
+  select
+    g.id,
+    g.slug,
+    g.title,
+    g.category,
+    g.summary,
+    g.content,
+    g.status,
+    g.is_pinned,
+    g.created_at,
+    g.updated_at,
+    g.published_at
+  from public.guide_posts g
+  where g.id = v_id;
+end;
+$$;
+
+create or replace function public.delete_guide_post(
+  p_app_admin_pin text,
+  p_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  delete from public.guide_posts g
+  where g.id = p_id;
+
+  if not found then
+    raise exception '找不到攻略。';
+  end if;
+end;
+$$;
+
+create or replace function public.create_guide_image_upload_path(
+  p_app_admin_pin text,
+  p_file_name text,
+  p_content_type text
+)
+returns table(
+  bucket_name text,
+  object_path text
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_file_name text := nullif(trim(p_file_name), '');
+  v_content_type text := lower(nullif(trim(p_content_type), ''));
+  v_extension text;
+  v_object_path text;
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  if v_content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif') then
+    raise exception '圖片格式只支援 JPG、PNG、WEBP 或 GIF。';
+  end if;
+
+  v_extension := case v_content_type
+    when 'image/jpeg' then 'jpg'
+    when 'image/png' then 'png'
+    when 'image/webp' then 'webp'
+    when 'image/gif' then 'gif'
+  end;
+  v_object_path := 'guides/' || to_char(now(), 'YYYY/MM') || '/' || replace(extensions.gen_random_uuid()::text, '-', '') || '.' || v_extension;
+
+  insert into public.guide_image_upload_paths (
+    object_path,
+    original_name,
+    content_type,
+    expires_at
+  )
+  values (
+    v_object_path,
+    left(v_file_name, 220),
+    v_content_type,
+    now() + interval '15 minutes'
+  );
+
+  return query select 'rooc-guide-images'::text, v_object_path;
+end;
+$$;
+
+create or replace function public.can_upload_guide_image(
+  p_object_path text
+)
+returns boolean
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.guide_image_upload_paths upload_path
+    where upload_path.object_path = p_object_path
+      and upload_path.expires_at > now()
+  );
+$$;
+
+create or replace function public.create_guide_image_delete_paths(
+  p_app_admin_pin text,
+  p_object_paths text[]
+)
+returns table(
+  bucket_name text,
+  object_path text
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  delete from public.guide_image_delete_paths delete_path
+  where delete_path.expires_at <= now();
+
+  insert into public.guide_image_delete_paths (
+    object_path,
+    expires_at
+  )
+  select distinct upload_path.object_path, now() + interval '15 minutes'
+  from unnest(coalesce(p_object_paths, array[]::text[])) requested_path(object_path)
+  join public.guide_image_upload_paths upload_path
+    on upload_path.object_path = requested_path.object_path
+  where requested_path.object_path like 'guides/%'
+    and not exists (
+      select 1
+      from public.guide_posts guide
+      where guide.content like '%' || upload_path.object_path || '%'
+    )
+  on conflict on constraint guide_image_delete_paths_pkey do update
+  set
+    created_at = now(),
+    expires_at = excluded.expires_at;
+
+  return query
+  select 'rooc-guide-images'::text, delete_path.object_path
+  from public.guide_image_delete_paths delete_path
+  where delete_path.expires_at > now()
+    and delete_path.object_path = any(coalesce(p_object_paths, array[]::text[]))
+    and not exists (
+      select 1
+      from public.guide_posts guide
+      where guide.content like '%' || delete_path.object_path || '%'
+    );
+end;
+$$;
+
+create or replace function public.list_unused_guide_images(
+  p_app_admin_pin text
+)
+returns table(
+  bucket_name text,
+  object_path text
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  delete from public.guide_image_delete_paths delete_path
+  where delete_path.expires_at <= now();
+
+  insert into public.guide_image_delete_paths (
+    object_path,
+    expires_at
+  )
+  select upload_path.object_path, now() + interval '15 minutes'
+  from public.guide_image_upload_paths upload_path
+  where upload_path.expires_at <= now()
+    and not exists (
+      select 1
+      from public.guide_posts guide
+      where guide.content like '%' || upload_path.object_path || '%'
+    )
+  on conflict on constraint guide_image_delete_paths_pkey do update
+  set
+    created_at = now(),
+    expires_at = excluded.expires_at;
+
+  return query
+  select 'rooc-guide-images'::text, delete_path.object_path
+  from public.guide_image_delete_paths delete_path
+  where delete_path.expires_at > now()
+    and not exists (
+      select 1
+      from public.guide_posts guide
+      where guide.content like '%' || delete_path.object_path || '%'
+    );
+end;
+$$;
+
+create or replace function public.finalize_guide_image_deletes(
+  p_app_admin_pin text,
+  p_object_paths text[]
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_count integer := 0;
+begin
+  perform public.assert_app_admin(p_app_admin_pin);
+
+  delete from public.guide_image_delete_paths delete_path
+  where delete_path.object_path = any(coalesce(p_object_paths, array[]::text[]));
+
+  delete from public.guide_image_upload_paths upload_path
+  where upload_path.object_path = any(coalesce(p_object_paths, array[]::text[]));
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function public.can_delete_guide_image(
+  p_object_path text
+)
+returns boolean
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.guide_image_delete_paths delete_path
+    where delete_path.object_path = p_object_path
+      and delete_path.expires_at > now()
+      and not exists (
+        select 1
+        from public.guide_posts guide
+        where guide.content like '%' || delete_path.object_path || '%'
+      )
+  );
+$$;
+
+do $$
+begin
+  if to_regclass('storage.objects') is not null then
+    execute 'drop policy if exists "rooc guide images upload with admin path" on storage.objects';
+    execute 'drop policy if exists "rooc guide images delete with admin path" on storage.objects';
+    execute $storage$
+      create policy "rooc guide images upload with admin path"
+      on storage.objects
+      for insert
+      to anon, authenticated
+      with check (
+        bucket_id = 'rooc-guide-images'
+        and public.can_upload_guide_image(name)
+      )
+    $storage$;
+    execute $storage$
+      create policy "rooc guide images delete with admin path"
+      on storage.objects
+      for delete
+      to anon, authenticated
+      using (
+        bucket_id = 'rooc-guide-images'
+        and public.can_delete_guide_image(name)
+      )
+    $storage$;
+  end if;
+end;
+$$;
+
+create or replace function public.list_public_guide_posts(
+  p_query text default null,
+  p_category text default null
+)
+returns table(
+  slug text,
+  title text,
+  category text,
+  summary text,
+  is_pinned boolean,
+  updated_at timestamptz,
+  published_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_query text := nullif(trim(p_query), '');
+  v_category text := nullif(trim(p_category), '');
+begin
+  return query
+  select
+    g.slug,
+    g.title,
+    g.category,
+    g.summary,
+    g.is_pinned,
+    g.updated_at,
+    g.published_at
+  from public.guide_posts g
+  where g.status = 'published'
+    and (v_category is null or g.category = v_category)
+    and (
+      v_query is null
+      or g.title ilike '%' || v_query || '%'
+      or g.category ilike '%' || v_query || '%'
+      or coalesce(g.summary, '') ilike '%' || v_query || '%'
+      or g.content ilike '%' || v_query || '%'
+    )
+  order by g.is_pinned desc, g.updated_at desc, g.published_at desc nulls last;
+end;
+$$;
+
+create or replace function public.get_public_guide_post(
+  p_slug text
+)
+returns table(
+  slug text,
+  title text,
+  category text,
+  summary text,
+  content text,
+  is_pinned boolean,
+  updated_at timestamptz,
+  published_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+begin
+  return query
+  select
+    g.slug,
+    g.title,
+    g.category,
+    g.summary,
+    g.content,
+    g.is_pinned,
+    g.updated_at,
+    g.published_at
+  from public.guide_posts g
+  where g.status = 'published'
+    and g.slug = lower(trim(p_slug));
+end;
+$$;
+
+create or replace function public.list_public_rooc_members(
+  p_query text default null,
+  p_occupation text default null
+)
+returns table(
+  member_no text,
+  role_name text,
+  occupation text,
+  joined_dc boolean,
+  updated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_query text := nullif(trim(p_query), '');
+  v_occupation text := nullif(trim(p_occupation), '');
+begin
+  return query
+  select
+    m.member_no,
+    m.role_name,
+    m.occupation,
+    m.joined_dc,
+    m.updated_at
+  from public.rooc_members m
+  where m.is_active
+    and (v_occupation is null or m.occupation = v_occupation)
+    and (
+      v_query is null
+      or m.member_no ilike '%' || v_query || '%'
+      or m.role_name ilike '%' || v_query || '%'
+      or coalesce(m.occupation, '') ilike '%' || v_query || '%'
+    )
+  order by coalesce(m.occupation, '未分類'), m.member_no;
 end;
 $$;
 
@@ -2537,6 +3174,9 @@ $$;
 revoke all on public.raffle_app_config from anon, authenticated;
 revoke all on public.rooc_members from anon, authenticated;
 revoke all on public.rooc_occupations from anon, authenticated;
+revoke all on public.guide_posts from anon, authenticated;
+revoke all on public.guide_image_upload_paths from anon, authenticated;
+revoke all on public.guide_image_delete_paths from anon, authenticated;
 revoke all on public.raffle_events from anon, authenticated;
 revoke all on public.raffle_prizes from anon, authenticated;
 revoke all on public.raffle_draws from anon, authenticated;
@@ -2551,6 +3191,18 @@ revoke execute on function public.assert_app_admin(text) from public, anon, auth
 revoke execute on function public.validate_event_admin(text, text) from public, anon, authenticated;
 revoke execute on function public.initialize_app_admin(text) from public;
 revoke execute on function public.change_app_admin_pin(text, text) from public;
+revoke execute on function public.list_guide_posts_admin(text, text, text) from public;
+revoke execute on function public.upsert_guide_post(text, uuid, text, text, text, text, text, text, boolean) from public;
+revoke execute on function public.delete_guide_post(text, uuid) from public;
+revoke execute on function public.create_guide_image_upload_path(text, text, text) from public;
+revoke execute on function public.can_upload_guide_image(text) from public;
+revoke execute on function public.create_guide_image_delete_paths(text, text[]) from public;
+revoke execute on function public.list_unused_guide_images(text) from public;
+revoke execute on function public.finalize_guide_image_deletes(text, text[]) from public;
+revoke execute on function public.can_delete_guide_image(text) from public;
+revoke execute on function public.list_public_guide_posts(text, text) from public;
+revoke execute on function public.get_public_guide_post(text) from public;
+revoke execute on function public.list_public_rooc_members(text, text) from public;
 revoke execute on function public.get_rooc_occupations(text, boolean) from public;
 revoke execute on function public.upsert_rooc_occupation(text, text, text, boolean) from public;
 revoke execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) from public;
@@ -2580,6 +3232,18 @@ revoke execute on function public.resolve_raffle_draw(text, text, uuid, text, te
 grant usage on schema public to anon, authenticated;
 grant execute on function public.initialize_app_admin(text) to anon, authenticated;
 grant execute on function public.change_app_admin_pin(text, text) to anon, authenticated;
+grant execute on function public.list_guide_posts_admin(text, text, text) to anon, authenticated;
+grant execute on function public.upsert_guide_post(text, uuid, text, text, text, text, text, text, boolean) to anon, authenticated;
+grant execute on function public.delete_guide_post(text, uuid) to anon, authenticated;
+grant execute on function public.create_guide_image_upload_path(text, text, text) to anon, authenticated;
+grant execute on function public.can_upload_guide_image(text) to anon, authenticated;
+grant execute on function public.create_guide_image_delete_paths(text, text[]) to anon, authenticated;
+grant execute on function public.list_unused_guide_images(text) to anon, authenticated;
+grant execute on function public.finalize_guide_image_deletes(text, text[]) to anon, authenticated;
+grant execute on function public.can_delete_guide_image(text) to anon, authenticated;
+grant execute on function public.list_public_guide_posts(text, text) to anon, authenticated;
+grant execute on function public.get_public_guide_post(text) to anon, authenticated;
+grant execute on function public.list_public_rooc_members(text, text) to anon, authenticated;
 grant execute on function public.get_rooc_occupations(text, boolean) to anon, authenticated;
 grant execute on function public.upsert_rooc_occupation(text, text, text, boolean) to anon, authenticated;
 grant execute on function public.upsert_rooc_member(text, text, text, text, text, boolean, boolean) to anon, authenticated;

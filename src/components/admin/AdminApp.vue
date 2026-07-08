@@ -48,8 +48,8 @@ onMounted(() => {
       <HeroHeader
         title="星辰"
         action-href="public.html"
-        action-icon="shield-check"
-        action-text="公開驗證"
+        action-icon="users"
+        action-text="成員入口"
         show-admin-actions
       />
     </header>
@@ -146,7 +146,7 @@ onMounted(() => {
               <div class="table-head" id="award-table-head">
                 <TableHeadBar title="中獎名單" :actions="exportAction('export-awards')" />
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap record-table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -167,7 +167,7 @@ onMounted(() => {
               <div class="table-head" id="draw-log-table-head">
                 <TableHeadBar title="抽獎紀錄" :actions="exportAction('export-draw-log')" />
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap record-table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -270,7 +270,7 @@ onMounted(() => {
             <div class="table-head" id="history-prize-table-head">
               <TableHeadBar title="獎項紀錄" />
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap record-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -290,7 +290,7 @@ onMounted(() => {
             <div class="table-head" id="history-award-table-head">
               <TableHeadBar title="中獎名單" :actions="exportAction('export-history-awards')" />
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap record-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -311,7 +311,7 @@ onMounted(() => {
             <div class="table-head" id="history-draw-log-table-head">
               <TableHeadBar title="抽獎紀錄" :actions="exportAction('export-history-draw-log')" />
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap record-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -348,7 +348,7 @@ onMounted(() => {
               <MemberListToolbar />
             </div>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap member-table-wrap">
             <table>
               <thead id="member-table-head"></thead>
               <tbody id="member-table"></tbody>
@@ -379,6 +379,172 @@ onMounted(() => {
             <OccupationDialogContent />
           </div>
         </dialog>
+      </section>
+
+      <section class="panel tab-panel" id="panel-guides" data-panel="guides" hidden>
+        <div class="panel-head">
+          <PanelHead
+            label="Guides"
+            title="攻略中心"
+            status-id="guide-status"
+            status-text="未載入"
+          />
+        </div>
+
+        <div class="guide-admin-layout">
+          <section class="guide-view table-card guide-list-card is-active" id="guide-list-view">
+            <div class="guide-list-head">
+              <div>
+                <p class="section-label">攻略列表</p>
+                <h3>選擇攻略</h3>
+              </div>
+              <button class="btn primary" type="button" id="create-guide-post">
+                <i data-lucide="plus"></i>
+                <span>新增</span>
+              </button>
+            </div>
+
+            <form class="guide-search-form" id="guide-search-form">
+              <input name="query" type="search" placeholder="搜尋攻略">
+              <select name="status" aria-label="攻略狀態">
+                <option value="">全部狀態</option>
+                <option value="published">已發布</option>
+                <option value="draft">草稿</option>
+              </select>
+              <button class="btn secondary" type="submit">
+                <i data-lucide="search"></i>
+                <span>搜尋</span>
+              </button>
+            </form>
+
+            <div class="guide-maintenance-row">
+              <button class="btn secondary" type="button" id="refresh-guides">
+                <i data-lucide="refresh-cw"></i>
+                <span>刷新</span>
+              </button>
+            </div>
+            <div class="guide-list" id="guide-post-list"></div>
+          </section>
+
+          <section class="guide-view table-card guide-editor-card" id="guide-editor-view" hidden>
+            <div class="guide-editor-head">
+              <div class="guide-editor-title-row">
+                <button class="btn secondary guide-back-button" type="button" id="back-to-guide-list">
+                  <i data-lucide="arrow-left"></i>
+                  <span>列表</span>
+                </button>
+                <div>
+                  <p class="section-label">編輯器</p>
+                  <h3 id="guide-editor-title">新增攻略</h3>
+                </div>
+              </div>
+              <div class="button-row guide-danger-row">
+                <button class="btn danger" type="button" id="delete-guide-post" disabled>
+                  <i data-lucide="trash-2"></i>
+                  <span>刪除攻略</span>
+                </button>
+              </div>
+            </div>
+
+            <form class="guide-form" id="guide-post-form">
+              <input type="hidden" name="id">
+              <section class="guide-meta-card" aria-label="攻略基本資料">
+                <div class="guide-meta-grid">
+                  <label class="guide-title-field">
+                    <span>標題</span>
+                    <input name="title" required maxlength="160" placeholder="例如：神官團補基礎配置">
+                  </label>
+                  <label class="guide-category-field">
+                    <span>分類</span>
+                    <input name="category" required maxlength="80" placeholder="例如：職業攻略">
+                    <div class="guide-category-presets" aria-label="常用分類">
+                      <button class="chip-button" type="button" data-guide-category-preset="一般">一般</button>
+                      <button class="chip-button" type="button" data-guide-category-preset="職業攻略">職業攻略</button>
+                      <button class="chip-button" type="button" data-guide-category-preset="王團攻略">王團攻略</button>
+                      <button class="chip-button" type="button" data-guide-category-preset="活動資訊">活動資訊</button>
+                    </div>
+                  </label>
+                  <label>
+                    <span>狀態</span>
+                    <select name="status">
+                      <option value="draft">草稿</option>
+                      <option value="published">發布</option>
+                    </select>
+                  </label>
+                  <label class="inline-check guide-pin-check">
+                    <input name="is_pinned" type="checkbox">
+                    <span>置頂</span>
+                  </label>
+                </div>
+
+                <label>
+                  <span>摘要</span>
+                  <textarea name="summary" rows="2" maxlength="500" placeholder="列表中顯示的簡短說明"></textarea>
+                </label>
+              </section>
+
+              <section class="guide-markdown-editor" aria-label="攻略 Markdown 編輯器">
+                <div class="guide-markdown-toolbar" id="guide-markdown-toolbar" aria-label="Markdown 工具列">
+                  <button class="btn table-action" type="button" data-guide-md-action="h2" title="小標題">
+                    <i data-lucide="heading-2"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="h3" title="段落標題">
+                    <i data-lucide="heading-3"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="bold" title="粗體">
+                    <i data-lucide="bold"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="italic" title="斜體">
+                    <i data-lucide="italic"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="list" title="清單">
+                    <i data-lucide="list"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="quote" title="引用">
+                    <i data-lucide="quote"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="code" title="程式碼">
+                    <i data-lucide="code-2"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="link" title="連結">
+                    <i data-lucide="link"></i>
+                  </button>
+                  <button class="btn table-action" type="button" data-guide-md-action="image-link" title="圖片連結">
+                    <i data-lucide="image"></i>
+                  </button>
+                  <label class="btn table-action guide-md-upload" title="上傳圖片">
+                    <i data-lucide="image-up"></i>
+                    <input id="guide-image-upload" type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+                  </label>
+                </div>
+
+                <div class="guide-markdown-shell">
+                  <label class="guide-editor-pane">
+                    <span>Markdown</span>
+                    <textarea
+                      id="guide-content-editor"
+                      name="content"
+                      rows="22"
+                      placeholder="在這裡寫攻略。可以使用 Markdown，也可以上傳圖片後自動插入圖片語法。"
+                    ></textarea>
+                  </label>
+                  <section class="guide-preview-pane">
+                    <div class="guide-pane-label">Preview</div>
+                    <article class="guide-content" id="guide-preview"></article>
+                  </section>
+                </div>
+              </section>
+
+              <div class="button-row guide-editor-actions">
+                <button class="btn primary" type="submit">
+                  <i data-lucide="save"></i>
+                  <span>儲存攻略</span>
+                </button>
+              </div>
+            </form>
+
+          </section>
+        </div>
       </section>
     </section>
 

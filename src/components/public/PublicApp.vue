@@ -21,20 +21,35 @@ onMounted(() => {
   <main class="app-shell public-shell">
     <header class="hero public-hero">
       <HeroHeader
-        title="公開驗證"
+        title="星辰"
         action-href="index.html"
         action-icon="lock-keyhole"
         action-text="管理後台"
       />
     </header>
 
+    <nav class="tabs public-tabs" id="public-tabs" aria-label="成員功能">
+      <button class="tab is-active" type="button" data-public-tab="verify">
+        <i data-lucide="history"></i>
+        <span>抽獎紀錄</span>
+      </button>
+      <button class="tab" type="button" data-public-tab="guides">
+        <i data-lucide="book-open"></i>
+        <span>攻略中心</span>
+      </button>
+      <button class="tab" type="button" data-public-tab="members">
+        <i data-lucide="users"></i>
+        <span>公會成員</span>
+      </button>
+    </nav>
+
     <section class="toast-stack" id="toast-stack" aria-live="polite" aria-label="系統提示"></section>
 
-    <section class="panel public-panel">
+    <section class="panel public-panel public-tab-panel is-active" id="public-panel-verify" data-public-panel="verify">
       <div class="panel-head">
         <PanelHead
-          label="Fairness"
-          title="抽獎歷史與公平驗證"
+          label="抽獎資訊"
+          title="抽獎紀錄與公平驗證"
           status-id="public-status"
           status-text="未載入"
         />
@@ -42,7 +57,7 @@ onMounted(() => {
 
       <form class="toolbar-form compact-toolbar" id="public-event-form">
         <EventLoadToolbarContent
-          field-label="公開活動"
+          field-label="活動紀錄"
           select-id="public-event-select"
           default-option="選擇活動"
           refresh-button-id="refresh-public-events"
@@ -51,7 +66,7 @@ onMounted(() => {
       </form>
 
       <div class="empty-state" id="public-empty">
-        <EmptyState message="選擇活動後查看公開中獎紀錄與抽獎驗證。" />
+        <EmptyState message="選擇活動後查看中獎紀錄與抽獎驗證。" />
       </div>
 
       <div class="public-detail" id="public-detail" hidden>
@@ -69,7 +84,7 @@ onMounted(() => {
           <div class="table-head" id="public-prize-table-head">
             <TableHeadBar title="獎項紀錄" />
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap record-table-wrap">
             <table>
               <thead>
                 <tr>
@@ -89,7 +104,7 @@ onMounted(() => {
           <div class="table-head" id="public-award-table-head">
             <TableHeadBar title="中獎名單" />
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap record-table-wrap">
             <table>
               <thead>
                 <tr>
@@ -110,7 +125,7 @@ onMounted(() => {
           <div class="table-head" id="public-draw-table-head">
             <TableHeadBar title="抽獎驗證紀錄" />
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap record-table-wrap">
             <table>
               <thead>
                 <tr>
@@ -127,6 +142,92 @@ onMounted(() => {
           </div>
         </section>
       </div>
+    </section>
+
+    <section class="panel public-panel public-tab-panel" id="public-panel-guides" data-public-panel="guides" hidden>
+      <div class="panel-head">
+        <PanelHead
+          label="Guides"
+          title="攻略中心"
+          status-id="public-guide-status"
+          status-text="未載入"
+        />
+      </div>
+
+      <form class="toolbar-form compact-toolbar" id="public-guide-search-form">
+        <label>
+          <span>搜尋攻略</span>
+          <input name="query" type="search" placeholder="搜尋標題、分類或內容">
+        </label>
+        <div class="toolbar-actions">
+          <button class="btn secondary" type="submit">
+            <i data-lucide="search"></i>
+            <span>搜尋</span>
+          </button>
+          <button class="btn secondary" type="button" id="refresh-public-guides">
+            <i data-lucide="refresh-cw"></i>
+            <span>刷新</span>
+          </button>
+        </div>
+      </form>
+
+      <div class="public-guide-layout">
+        <section class="table-card public-guide-list-card">
+          <div class="table-head">
+            <h3>攻略列表</h3>
+          </div>
+          <div class="guide-list public-guide-list" id="public-guide-list"></div>
+        </section>
+
+        <section class="table-card public-guide-reader-card">
+          <div class="table-head">
+            <h3>攻略內容</h3>
+          </div>
+          <article class="guide-content guide-reader" id="public-guide-reader">
+            <p class="guide-muted">選擇攻略後查看內容。</p>
+          </article>
+        </section>
+      </div>
+    </section>
+
+    <section class="panel public-panel public-tab-panel" id="public-panel-members" data-public-panel="members" hidden>
+      <div class="panel-head">
+        <PanelHead
+          label="成員名冊"
+          title="公會成員"
+          status-id="public-member-status"
+          status-text="未載入"
+        />
+      </div>
+
+      <form class="toolbar-form compact-toolbar" id="public-member-search-form">
+        <label>
+          <span>搜尋成員</span>
+          <input name="query" type="search" placeholder="搜尋編號、角色名稱或職業">
+        </label>
+        <div class="toolbar-actions">
+          <button class="btn secondary" type="submit">
+            <i data-lucide="search"></i>
+            <span>搜尋</span>
+          </button>
+          <button class="btn secondary" type="button" id="refresh-public-members">
+            <i data-lucide="refresh-cw"></i>
+            <span>刷新</span>
+          </button>
+        </div>
+      </form>
+
+      <section class="table-card public-member-list-card">
+        <div class="table-head">
+          <h3>成員列表</h3>
+        </div>
+        <div class="table-wrap public-member-table-wrap">
+          <table>
+            <thead id="public-member-table-head"></thead>
+            <tbody id="public-member-list"></tbody>
+          </table>
+        </div>
+      </section>
     </section>
 
     <dialog class="modal roster-modal" id="public-roster-dialog">

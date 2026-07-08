@@ -11,7 +11,8 @@ function defaultTabs() {
   return [
     { key: "console", label: "抽獎控制台", icon: "sparkles" },
     { key: "history", label: "歷史紀錄", icon: "history" },
-    { key: "members", label: "成員", icon: "users" }
+    { key: "guides", label: "攻略", icon: "book-open" },
+    { key: "members", label: "公會成員", icon: "users" }
   ];
 }
 

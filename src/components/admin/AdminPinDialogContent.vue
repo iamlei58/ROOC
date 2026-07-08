@@ -36,8 +36,8 @@
         <span>取消</span>
       </button>
       <button class="btn secondary" type="button" id="return-public-from-login" hidden>
-        <i data-lucide="shield-check"></i>
-        <span>返回公開驗證</span>
+        <i data-lucide="users"></i>
+        <span>返回成員入口</span>
       </button>
     </div>
   </form>

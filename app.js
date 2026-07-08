@@ -1,13 +1,19 @@
 const STORAGE_KEYS = {
   eventTitle: "rooc_event_title",
   eventSlug: "rooc_event_slug",
-  appAdminPin: "rooc_app_admin_pin"
+  appAdminPin: "rooc_app_admin_pin",
+  activeTab: "rooc_admin_active_tab"
 };
+
+const ADMIN_TAB_KEYS = ["console", "history", "guides", "members"];
 
 const PENDING_DRAW_PAGE_SIZE = 20;
 const DRAW_LOG_RENDER_LIMIT = 80;
 const AWARD_RENDER_LIMIT = 120;
 const DRAW_EFFECT_CLEANUP_MS = 2600;
+const GUIDE_IMAGE_BUCKET = "rooc-guide-images";
+const GUIDE_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
+const GUIDE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 const state = {
   client: null,
@@ -23,6 +29,9 @@ const state = {
   openEvents: [],
   historyEvents: [],
   historyEvent: null,
+  guidePosts: [],
+  guideCurrentId: "",
+  guidesLoaded: false,
   publicAuditEvents: new Map(),
   auditDialogSeq: 0,
   providerMembers: [],
@@ -48,6 +57,9 @@ const memberCollator = new Intl.Collator("zh-Hant", {
 
 let memberSearchTimer = null;
 let memberLoadSeq = 0;
+let guideSearchTimer = null;
+let guideLoadSeq = 0;
+let guideScrollSyncLock = false;
 const drawAnimationState = {
   intervalId: null,
   labels: [],
@@ -109,30 +121,69 @@ function setText(selector, text) {
 }
 
 function bindTabs() {
-  if (renderAdminTabs("console")) return;
+  const activeTab = resolveAdminInitialTab();
+  if (renderAdminTabs(activeTab)) {
+    switchTab(activeTab, { persist: false, prepare: false });
+    return;
+  }
 
   $all("[data-tab]").forEach((tab) => {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
   });
+  switchTab(activeTab, { persist: false, prepare: false });
 }
 
-function switchTab(tabName) {
-  window.ROOC_VUE_ADMIN_TABS?.setActive?.(tabName);
+function switchTab(tabName, options = {}) {
+  const activeTab = ADMIN_TAB_KEYS.includes(tabName) ? tabName : "console";
+  if (options.persist !== false) {
+    writeLocalValue(STORAGE_KEYS.activeTab, activeTab);
+    updateTabHash(activeTab);
+  }
+  window.ROOC_VUE_ADMIN_TABS?.setActive?.(activeTab);
   $all("[data-tab]").forEach((tab) => {
-    tab.classList.toggle("is-active", tab.dataset.tab === tabName);
+    tab.classList.toggle("is-active", tab.dataset.tab === activeTab);
   });
   $all("[data-panel]").forEach((panel) => {
-    const active = panel.dataset.panel === tabName;
+    const active = panel.dataset.panel === activeTab;
     panel.hidden = !active;
     panel.classList.toggle("is-active", active);
   });
-  if (tabName === "members") {
-    void prepareMemberPanel();
-  }
-  if (tabName === "history") {
-    void prepareHistoryPanel();
+  if (options.prepare !== false) {
+    void prepareActiveAdminPanel(activeTab);
   }
   refreshIcons();
+}
+
+async function prepareActiveAdminPanel(tabName = getActiveAdminTab()) {
+  if (tabName === "members") {
+    await prepareMemberPanel();
+  }
+  if (tabName === "guides") {
+    await prepareGuidePanel();
+  }
+  if (tabName === "history") {
+    await prepareHistoryPanel();
+  }
+}
+
+function getActiveAdminTab() {
+  return $("[data-panel].is-active")?.dataset.panel || "console";
+}
+
+function resolveAdminInitialTab() {
+  const hashTab = normalizeTabName(window.location.hash.slice(1), ADMIN_TAB_KEYS);
+  if (hashTab) return hashTab;
+  return normalizeTabName(readLocalValue(STORAGE_KEYS.activeTab), ADMIN_TAB_KEYS) || "console";
+}
+
+function normalizeTabName(value, allowedTabs) {
+  const tabName = String(value || "").replace(/^#/, "").trim();
+  return allowedTabs.includes(tabName) ? tabName : "";
+}
+
+function updateTabHash(tabName) {
+  if (window.location.hash.slice(1) === tabName) return;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${tabName}`);
 }
 
 function renderAdminTabs(activeTab = "console") {
@@ -142,7 +193,8 @@ function renderAdminTabs(activeTab = "console") {
     tabs: [
       { key: "console", label: "抽獎控制台", icon: "sparkles" },
       { key: "history", label: "歷史紀錄", icon: "history" },
-      { key: "members", label: "成員", icon: "users" }
+      { key: "guides", label: "攻略", icon: "book-open" },
+      { key: "members", label: "公會成員", icon: "users" }
     ],
     onSelect: switchTab,
     onRendered: refreshIcons
@@ -222,6 +274,24 @@ function bindForms() {
   $("#member-search-form").addEventListener("submit", handleMemberSearch);
   $("#member-search-form").elements.query.addEventListener("input", scheduleMemberSearch);
   $("#member-search-form").elements.include_inactive.addEventListener("change", () => scheduleMemberSearch(0));
+  $("#guide-search-form").addEventListener("submit", handleGuideSearch);
+  $("#guide-search-form").elements.query.addEventListener("input", scheduleGuideSearch);
+  $("#guide-search-form").elements.status.addEventListener("change", () => scheduleGuideSearch(0));
+  $("#refresh-guides").addEventListener("click", handleRefreshGuides);
+  $("#create-guide-post").addEventListener("click", () => resetGuideForm({ focus: true, showEditor: true }));
+  $("#back-to-guide-list").addEventListener("click", showGuideListView);
+  $("#guide-post-list").addEventListener("click", handleGuideListClick);
+  $("#guide-post-form").addEventListener("submit", handleGuideSave);
+  $("#guide-post-form").elements.content.addEventListener("input", renderGuidePreview);
+  $("#guide-post-form").elements.title.addEventListener("input", renderGuidePreview);
+  $("#guide-post-form").elements.summary.addEventListener("input", renderGuidePreview);
+  bindGuideScrollSync();
+  $all("[data-guide-category-preset]").forEach((button) => {
+    button.addEventListener("click", () => applyGuideCategoryPreset(button.dataset.guideCategoryPreset));
+  });
+  $("#guide-markdown-toolbar").addEventListener("click", handleGuideMarkdownToolbarClick);
+  $("#guide-image-upload").addEventListener("change", handleGuideMarkdownImageUpload);
+  $("#delete-guide-post").addEventListener("click", handleGuideDelete);
   if (!renderMemberSortHead()) {
     $all("[data-member-sort]").forEach((button) => {
       button.addEventListener("click", () => sortMembersBy(button.dataset.memberSort));
@@ -313,11 +383,7 @@ async function loadAdminBootstrapData() {
   await refreshOpenEvents("", { autoLoadSelection: true });
   await refreshHistoryEvents();
   await refreshPrizeProviderMembers();
-
-  if ($("#panel-members")?.classList.contains("is-active")) {
-    await loadOccupations();
-    await loadMembers();
-  }
+  await prepareActiveAdminPanel();
 }
 
 function hydrateEventTitle() {
@@ -2839,7 +2905,7 @@ function openAdminPinDialog(mode) {
   setText("#admin-pin-label", isLogin ? "輸入管理密碼" : "首次設定或驗證管理密碼");
   setText("#admin-pin-submit-label", isLogin ? "登入" : "確認");
   $("#cancel-admin-pin").hidden = isRequired && !canReturnPublic;
-  $("#cancel-admin-pin").setAttribute("aria-label", canReturnPublic ? "返回公開驗證" : "取消管理密碼驗證");
+  $("#cancel-admin-pin").setAttribute("aria-label", canReturnPublic ? "返回成員入口" : "取消管理密碼驗證");
   $("#dismiss-admin-pin").hidden = isRequired;
   $("#return-public-from-login").hidden = !canReturnPublic;
   verifyForm.hidden = isChange;
@@ -3659,6 +3725,730 @@ async function toggleMember(memberNo, isActive) {
   });
 }
 
+async function prepareGuidePanel() {
+  if (!state.appAdminPin || !state.client) return;
+  await withBusy($("#panel-guides"), async () => {
+    await ensureAppAdminPin();
+    await loadGuidePosts();
+    if (!state.guideCurrentId) {
+      resetGuideForm();
+      showGuideListView();
+    }
+  });
+}
+
+function showGuideListView() {
+  $("#guide-list-view")?.removeAttribute("hidden");
+  $("#guide-list-view")?.classList.add("is-active");
+  $("#guide-editor-view")?.setAttribute("hidden", "");
+  $("#guide-editor-view")?.classList.remove("is-active");
+  refreshIcons();
+}
+
+function showGuideEditorView() {
+  $("#guide-editor-view")?.removeAttribute("hidden");
+  $("#guide-editor-view")?.classList.add("is-active");
+  $("#guide-list-view")?.setAttribute("hidden", "");
+  $("#guide-list-view")?.classList.remove("is-active");
+  refreshIcons();
+}
+
+async function handleGuideSearch(event) {
+  event.preventDefault();
+  clearGuideSearchTimer();
+  await withBusy($("#guide-search-form"), async () => {
+    await ensureAppAdminPin();
+    await loadGuidePosts();
+  });
+}
+
+function scheduleGuideSearch(delay = 300) {
+  clearGuideSearchTimer();
+  guideSearchTimer = window.setTimeout(() => {
+    if (!state.appAdminPin) return;
+
+    void withBusy($("#guide-search-form"), async () => {
+      await ensureAppAdminPin();
+      await loadGuidePosts();
+    });
+  }, delay);
+}
+
+function clearGuideSearchTimer() {
+  if (guideSearchTimer) {
+    window.clearTimeout(guideSearchTimer);
+    guideSearchTimer = null;
+  }
+}
+
+async function handleRefreshGuides() {
+  await withBusy($("#panel-guides"), async () => {
+    await ensureAppAdminPin();
+    await loadGuidePosts();
+    showToast("攻略已刷新。", "success");
+  });
+}
+
+async function cleanupUnusedGuideImages() {
+  await ensureAppAdminPin();
+  const rows = await rpc("list_unused_guide_images", {
+    p_app_admin_pin: state.appAdminPin
+  });
+  return removeGuideImagesFromStorage(rows?.map((row) => row.object_path) || []);
+}
+
+async function loadGuidePosts() {
+  const loadSeq = ++guideLoadSeq;
+  const form = $("#guide-search-form");
+  const data = new FormData(form);
+  const rows = await rpc("list_guide_posts_admin", {
+    p_app_admin_pin: state.appAdminPin,
+    p_query: data.get("query"),
+    p_status: data.get("status")
+  });
+  if (loadSeq !== guideLoadSeq) return;
+
+  state.guidePosts = rows || [];
+  state.guidesLoaded = true;
+  if (state.guideCurrentId && !state.guidePosts.some((post) => post.id === state.guideCurrentId)) {
+    state.guideCurrentId = "";
+    resetGuideForm();
+    showGuideListView();
+  }
+  renderGuideList();
+  setText("#guide-status", `${state.guidePosts.length} 篇`);
+}
+
+function renderGuideList() {
+  const list = $("#guide-post-list");
+  if (!list) return;
+
+  if (!state.guidesLoaded) {
+    list.innerHTML = "";
+    return;
+  }
+
+  if (state.guidePosts.length === 0) {
+    list.innerHTML = `<div class="guide-list-empty">尚未建立攻略。</div>`;
+    return;
+  }
+
+  list.innerHTML = state.guidePosts.map((post) => {
+    const isActive = post.id === state.guideCurrentId;
+    const statusText = post.status === "published" ? "已發布" : "草稿";
+    const summary = post.summary || guidePlainText(post.content).slice(0, 86);
+    return `
+      <button class="guide-list-item${isActive ? " is-active" : ""}" type="button" data-guide-id="${escapeHtml(post.id)}">
+        <span class="guide-list-meta">
+          <span class="guide-category">${escapeHtml(post.category || "一般")}</span>
+          <span class="guide-status ${post.status === "published" ? "is-published" : "is-draft"}">${statusText}</span>
+          ${post.is_pinned ? '<span class="guide-pin">置頂</span>' : ""}
+        </span>
+        <strong>${escapeHtml(post.title)}</strong>
+        <span>${escapeHtml(summary || "沒有摘要。")}</span>
+        <small>${escapeHtml(formatGuideAdminListTime(post))}</small>
+      </button>
+    `;
+  }).join("");
+}
+
+function formatGuideAdminListTime(post) {
+  if (post?.updated_at) return `更新：${formatDate(post.updated_at)}`;
+  if (post?.created_at) return `建立：${formatDate(post.created_at)}`;
+  return "尚無時間";
+}
+
+function handleGuideListClick(event) {
+  const button = event.target.closest("[data-guide-id]");
+  if (!button) return;
+  selectGuidePost(button.dataset.guideId);
+}
+
+function selectGuidePost(id) {
+  const post = state.guidePosts.find((item) => item.id === id);
+  if (!post) {
+    showToast("找不到這篇攻略。", "error");
+    return;
+  }
+
+  state.guideCurrentId = post.id;
+  const form = $("#guide-post-form");
+  form.elements.id.value = post.id || "";
+  form.elements.title.value = post.title || "";
+  form.elements.category.value = post.category || "一般";
+  form.elements.status.value = post.status || "draft";
+  form.elements.is_pinned.checked = Boolean(post.is_pinned);
+  form.elements.summary.value = post.summary || "";
+  form.elements.content.value = guideContentToMarkdown(post.content);
+  $("#delete-guide-post").disabled = false;
+  setText("#guide-editor-title", "編輯攻略");
+  renderGuideList();
+  renderGuidePreview();
+  showGuideEditorView();
+  refreshIcons();
+}
+
+function resetGuideForm(options = {}) {
+  state.guideCurrentId = "";
+  const form = $("#guide-post-form");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.category.value = "一般";
+  form.elements.status.value = "draft";
+  form.elements.content.value = "";
+  $("#delete-guide-post").disabled = true;
+  setText("#guide-editor-title", "新增攻略");
+  renderGuideList();
+  renderGuidePreview();
+
+  if (options.showEditor) {
+    showGuideEditorView();
+  }
+
+  if (options.focus) {
+    form.elements.title.focus();
+  }
+}
+
+function applyGuideCategoryPreset(category) {
+  const input = $("#guide-post-form")?.elements?.category;
+  if (!input) return;
+  input.value = category || "一般";
+  input.focus();
+}
+
+async function handleGuideSave(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const oldPost = data.get("id")
+    ? state.guidePosts.find((item) => item.id === data.get("id"))
+    : null;
+  const nextContent = String(data.get("content") || "");
+
+  await withBusy(form, async () => {
+    await ensureAppAdminPin();
+    const title = cleanRequired(data.get("title"), "請輸入攻略標題。");
+    const rows = await rpc("upsert_guide_post", {
+      p_app_admin_pin: state.appAdminPin,
+      p_id: data.get("id") || null,
+      p_title: title,
+      p_slug: null,
+      p_category: data.get("category"),
+      p_summary: data.get("summary"),
+      p_content: nextContent,
+      p_status: data.get("status"),
+      p_is_pinned: data.get("is_pinned") === "on"
+    });
+    const saved = rows?.[0];
+    if (!saved) throw new Error("攻略儲存失敗。");
+
+    state.guideCurrentId = saved.id;
+    await loadGuidePosts();
+    await cleanupGuideImagesAfterSave(oldPost?.content || "", nextContent)
+      .catch((error) => showToast(`攻略已儲存，但圖片清理失敗：${friendlyError(error.message)}`, "warning"));
+    showGuideListView();
+    showToast(saved.status === "published" ? "攻略已發布。" : "攻略草稿已儲存。", "success");
+  });
+}
+
+async function handleGuideDelete() {
+  const id = $("#guide-post-form").elements.id.value;
+  if (!id) {
+    showToast("請先選擇攻略。", "error");
+    return;
+  }
+
+  const post = state.guidePosts.find((item) => item.id === id);
+  const confirmed = await requestConfirmDialog({
+    title: "刪除攻略",
+    message: `確定刪除「${post?.title || "這篇攻略"}」？`,
+    confirmLabel: "刪除攻略",
+    confirmIcon: "trash-2",
+    confirmKind: "danger"
+  });
+  if (!confirmed) return;
+  const imagePaths = extractGuideImagePaths(post?.content || "");
+
+  await withBusy($("#guide-editor-card") || $("#panel-guides"), async () => {
+    await ensureAppAdminPin();
+    await rpc("delete_guide_post", {
+      p_app_admin_pin: state.appAdminPin,
+      p_id: id
+    });
+    await cleanupGuideImagesAfterDelete(imagePaths)
+      .catch((error) => showToast(`攻略已刪除，但圖片清理失敗：${friendlyError(error.message)}`, "warning"));
+    resetGuideForm();
+    await loadGuidePosts();
+    showGuideListView();
+    showToast("攻略已刪除。", "success");
+  });
+}
+
+function handleGuideMarkdownToolbarClick(event) {
+  const button = event.target.closest("[data-guide-md-action]");
+  if (!button) return;
+
+  const textarea = $("#guide-content-editor");
+  if (!textarea) return;
+
+  const result = applyGuideTextFormat(textarea.value, textarea.selectionStart, textarea.selectionEnd, button.dataset.guideMdAction);
+  textarea.value = result.value;
+  textarea.focus();
+  textarea.setSelectionRange(result.selectionStart, result.selectionEnd);
+  renderGuidePreview();
+}
+
+async function handleGuideMarkdownImageUpload(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  await withBusy($("#guide-editor-card") || $("#panel-guides"), async () => {
+    const image = await uploadGuideImageFile(file);
+    insertGuideMarkdown(`![${image.alt}](${image.url})`);
+  });
+  input.value = "";
+}
+
+async function uploadGuideImageFile(file) {
+  if (!GUIDE_IMAGE_TYPES.has(file.type)) {
+    throw new Error("圖片格式只支援 JPG、PNG、WEBP 或 GIF。");
+  }
+  if (file.size > GUIDE_IMAGE_MAX_SIZE) {
+    throw new Error("圖片大小不能超過 5MB。");
+  }
+
+  await ensureAppAdminPin();
+  const rows = await rpc("create_guide_image_upload_path", {
+    p_app_admin_pin: state.appAdminPin,
+    p_file_name: file.name,
+    p_content_type: file.type
+  });
+  const uploadInfo = rows?.[0];
+  const bucketName = uploadInfo?.bucket_name || GUIDE_IMAGE_BUCKET;
+  if (!bucketName || !uploadInfo?.object_path) {
+    throw new Error("圖片上傳路徑建立失敗。");
+  }
+
+  const { error: uploadError } = await requireClient()
+    .storage
+    .from(bucketName)
+    .upload(uploadInfo.object_path, file, {
+      cacheControl: "31536000",
+      contentType: file.type,
+      upsert: false
+    });
+  if (uploadError) throw new Error(uploadError.message);
+
+  const { data } = requireClient()
+    .storage
+    .from(bucketName)
+    .getPublicUrl(uploadInfo.object_path);
+
+  showToast("圖片已上傳並加入攻略。", "success");
+  return {
+    url: data?.publicUrl || "",
+    alt: file.name.replace(/\.[^.]+$/, "")
+  };
+}
+
+async function cleanupRemovedGuideImages(previousContent, nextContent) {
+  const previous = new Set(extractGuideImagePaths(previousContent));
+  const next = new Set(extractGuideImagePaths(nextContent));
+  const removed = [...previous].filter((path) => !next.has(path));
+  await deleteGuideImages(removed);
+}
+
+async function cleanupGuideImagesAfterSave(previousContent, nextContent) {
+  await cleanupRemovedGuideImages(previousContent, nextContent);
+  await cleanupUnusedGuideImages();
+}
+
+async function cleanupGuideImagesAfterDelete(paths) {
+  await deleteGuideImages(paths);
+  await cleanupUnusedGuideImages();
+}
+
+async function deleteGuideImages(paths) {
+  const uniquePaths = [...new Set(paths || [])].filter(Boolean);
+  if (uniquePaths.length === 0) return 0;
+
+  await ensureAppAdminPin();
+  const rows = await rpc("create_guide_image_delete_paths", {
+    p_app_admin_pin: state.appAdminPin,
+    p_object_paths: uniquePaths
+  });
+  return removeGuideImagesFromStorage(rows?.map((row) => row.object_path) || []);
+}
+
+async function removeGuideImagesFromStorage(paths) {
+  const uniquePaths = [...new Set(paths || [])].filter(Boolean);
+  if (uniquePaths.length === 0) return 0;
+
+  const { error } = await requireClient()
+    .storage
+    .from(GUIDE_IMAGE_BUCKET)
+    .remove(uniquePaths);
+  if (error) throw new Error(error.message);
+  await ensureAppAdminPin();
+  await rpc("finalize_guide_image_deletes", {
+    p_app_admin_pin: state.appAdminPin,
+    p_object_paths: uniquePaths
+  });
+  return uniquePaths.length;
+}
+
+function extractGuideImagePaths(content) {
+  const markdown = guideContentToMarkdown(content);
+  const paths = [];
+  const imagePattern = /!\[[^\]]*]\(([^)\s]+)\)/g;
+  let match = imagePattern.exec(markdown);
+  while (match) {
+    const path = guideImageUrlToObjectPath(match[1]);
+    if (path) paths.push(path);
+    match = imagePattern.exec(markdown);
+  }
+  return [...new Set(paths)];
+}
+
+function guideImageUrlToObjectPath(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const publicMarker = `/storage/v1/object/public/${GUIDE_IMAGE_BUCKET}/`;
+  const encodedMarker = `/storage/v1/object/public/${encodeURIComponent(GUIDE_IMAGE_BUCKET)}/`;
+  const markerIndex = raw.indexOf(publicMarker);
+  const encodedMarkerIndex = raw.indexOf(encodedMarker);
+  const objectPath = markerIndex >= 0
+    ? raw.slice(markerIndex + publicMarker.length)
+    : encodedMarkerIndex >= 0
+      ? raw.slice(encodedMarkerIndex + encodedMarker.length)
+      : raw.startsWith("guides/")
+        ? raw
+        : "";
+  if (!objectPath || !objectPath.startsWith("guides/")) return "";
+
+  try {
+    return decodeURIComponent(objectPath.split(/[?#]/)[0]);
+  } catch {
+    return objectPath.split(/[?#]/)[0];
+  }
+}
+
+function insertGuideMarkdown(markdown) {
+  const textarea = $("#guide-content-editor");
+  if (!textarea) return;
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const spacerBefore = start > 0 && !textarea.value.slice(0, start).endsWith("\n") ? "\n\n" : "";
+  const spacerAfter = end < textarea.value.length && !textarea.value.slice(end).startsWith("\n") ? "\n\n" : "";
+  const insertion = `${spacerBefore}${markdown}${spacerAfter}`;
+  textarea.value = `${textarea.value.slice(0, start)}${insertion}${textarea.value.slice(end)}`;
+  const cursor = start + insertion.length;
+  textarea.focus();
+  textarea.setSelectionRange(cursor, cursor);
+  renderGuidePreview();
+}
+
+function applyGuideTextFormat(value, selectionStart, selectionEnd, format) {
+  if (format === "h2") {
+    return applyGuideLinePrefix(value, selectionStart, selectionEnd, "## ", "小標題");
+  }
+  if (format === "h3") {
+    return applyGuideLinePrefix(value, selectionStart, selectionEnd, "### ", "段落標題");
+  }
+  if (format === "list") {
+    return applyGuideLinePrefix(value, selectionStart, selectionEnd, "- ", "清單項目");
+  }
+  if (format === "quote") {
+    return applyGuideLinePrefix(value, selectionStart, selectionEnd, "> ", "引用內容");
+  }
+  if (format === "code") {
+    return applyGuideWrapFormat(value, selectionStart, selectionEnd, "`", "`", "指令");
+  }
+  if (format === "italic") {
+    return applyGuideWrapFormat(value, selectionStart, selectionEnd, "*", "*", "斜體");
+  }
+  if (format === "link") {
+    return applyGuideLinkFormat(value, selectionStart, selectionEnd);
+  }
+  if (format === "image-link") {
+    return applyGuideImageLinkFormat(value, selectionStart, selectionEnd);
+  }
+  return applyGuideWrapFormat(value, selectionStart, selectionEnd, "**", "**", "重點");
+}
+
+function applyGuideWrapFormat(value, selectionStart, selectionEnd, prefix, suffix, fallback) {
+  const selected = value.slice(selectionStart, selectionEnd) || fallback;
+  const replacement = `${prefix}${selected}${suffix}`;
+  return {
+    value: `${value.slice(0, selectionStart)}${replacement}${value.slice(selectionEnd)}`,
+    selectionStart: selectionStart + prefix.length,
+    selectionEnd: selectionStart + prefix.length + selected.length
+  };
+}
+
+function applyGuideLinePrefix(value, selectionStart, selectionEnd, prefix, fallback) {
+  if (selectionStart === selectionEnd) {
+    const insertion = `${prefix}${fallback}`;
+    return {
+      value: `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`,
+      selectionStart: selectionStart + prefix.length,
+      selectionEnd: selectionStart + insertion.length
+    };
+  }
+
+  const before = value.slice(0, selectionStart);
+  const selected = value.slice(selectionStart, selectionEnd);
+  const after = value.slice(selectionEnd);
+  const replacement = selected
+    .split("\n")
+    .map((line) => line.startsWith(prefix) ? line : `${prefix}${line}`)
+    .join("\n");
+  return {
+    value: `${before}${replacement}${after}`,
+    selectionStart,
+    selectionEnd: selectionStart + replacement.length
+  };
+}
+
+function applyGuideLinkFormat(value, selectionStart, selectionEnd) {
+  const selected = value.slice(selectionStart, selectionEnd) || "連結文字";
+  const replacement = `[${selected}](https://)`;
+  return {
+    value: `${value.slice(0, selectionStart)}${replacement}${value.slice(selectionEnd)}`,
+    selectionStart: selectionStart + 1,
+    selectionEnd: selectionStart + 1 + selected.length
+  };
+}
+
+function applyGuideImageLinkFormat(value, selectionStart, selectionEnd) {
+  const selected = value.slice(selectionStart, selectionEnd).trim();
+  const isSelectedUrl = /^https?:\/\//i.test(selected);
+  const alt = isSelectedUrl ? "圖片說明" : selected || "圖片說明";
+  const url = isSelectedUrl ? selected : "https://";
+  const replacement = `![${alt}](${url})`;
+  const urlStart = selectionStart + replacement.indexOf("(") + 1;
+  return {
+    value: `${value.slice(0, selectionStart)}${replacement}${value.slice(selectionEnd)}`,
+    selectionStart: urlStart,
+    selectionEnd: urlStart + url.length
+  };
+}
+
+function renderGuidePreview() {
+  const form = $("#guide-post-form");
+  const title = form?.elements?.title?.value || "";
+  const summary = form?.elements?.summary?.value || "";
+  const content = form?.elements?.content?.value || "";
+  const preview = $("#guide-preview");
+  if (!preview) return;
+
+  const contentHtml = renderGuideMarkdown(content);
+  const fallback = title || summary || contentHtml
+    ? ""
+    : "<p class=\"guide-muted\">開始輸入內容後會顯示預覽。</p>";
+  preview.innerHTML = [
+    title ? `<h1>${escapeHtml(title)}</h1>` : "",
+    summary ? `<p class="guide-summary-text">${escapeHtml(summary)}</p>` : "",
+    contentHtml || fallback
+  ].join("");
+  syncGuidePreviewToEditor();
+}
+
+function bindGuideScrollSync() {
+  const editor = $("#guide-content-editor");
+  const preview = $("#guide-preview");
+  if (!editor || !preview) return;
+
+  editor.addEventListener("scroll", () => syncGuideScroll(editor, preview));
+  preview.addEventListener("scroll", () => syncGuideScroll(preview, editor));
+}
+
+function syncGuidePreviewToEditor() {
+  const editor = $("#guide-content-editor");
+  const preview = $("#guide-preview");
+  syncGuideScroll(editor, preview);
+}
+
+function syncGuideScroll(source, target) {
+  if (guideScrollSyncLock || !source || !target) return;
+
+  const sourceMax = source.scrollHeight - source.clientHeight;
+  const targetMax = target.scrollHeight - target.clientHeight;
+  if (sourceMax <= 0 || targetMax <= 0) return;
+
+  const nextTop = (source.scrollTop / sourceMax) * targetMax;
+  guideScrollSyncLock = true;
+  target.scrollTop = nextTop;
+  window.requestAnimationFrame(() => {
+    guideScrollSyncLock = false;
+  });
+}
+
+function renderGuideContent(content) {
+  return renderGuideMarkdown(guideContentToMarkdown(content)) || '<p class="guide-muted">這篇攻略目前沒有內容。</p>';
+}
+
+function renderGuideMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let listItems = [];
+  let paragraph = [];
+  let codeBlock = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    html.push(`<p>${renderGuideInline(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    html.push(`<ul>${listItems.map((item) => `<li>${renderGuideInline(item)}</li>`).join("")}</ul>`);
+    listItems = [];
+  };
+  const flushCodeBlock = () => {
+    if (!codeBlock) return;
+    html.push(renderGuideCodeBlock(codeBlock.lines, codeBlock.language));
+    codeBlock = null;
+  };
+
+  lines.forEach((line) => {
+    const text = line.trim();
+    if (codeBlock) {
+      if (/^```\s*$/.test(text)) {
+        flushCodeBlock();
+        return;
+      }
+      codeBlock.lines.push(line);
+      return;
+    }
+
+    const codeFence = text.match(/^```\s*([A-Za-z0-9_+.#-]*!?)?\s*$/);
+    if (codeFence) {
+      flushParagraph();
+      flushList();
+      codeBlock = {
+        language: String(codeFence[1] || "").replace(/!$/, ""),
+        lines: []
+      };
+      return;
+    }
+
+    if (!text) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const heading = text.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length + 1;
+      html.push(`<h${level}>${renderGuideInline(heading[2])}</h${level}>`);
+      return;
+    }
+
+    const quote = text.match(/^>\s+(.+)$/);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      html.push(`<blockquote>${renderGuideInline(quote[1])}</blockquote>`);
+      return;
+    }
+
+    const image = text.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (image) {
+      flushParagraph();
+      flushList();
+      const safeUrl = safeGuideImageUrl(image[2]);
+      if (safeUrl) {
+        html.push(`
+          <figure class="guide-figure">
+            <img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(image[1] || "攻略圖片")}">
+          </figure>
+        `);
+      }
+      return;
+    }
+
+    const bullet = text.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push(bullet[1]);
+      return;
+    }
+
+    flushList();
+    paragraph.push(text);
+  });
+
+  flushCodeBlock();
+  flushParagraph();
+  flushList();
+  return html.join("");
+}
+
+function renderGuideCodeBlock(lines, language = "") {
+  const lang = String(language || "").replace(/[^A-Za-z0-9_+.#-]/g, "");
+  const langAttr = lang ? ` data-language="${escapeHtml(lang)}"` : "";
+  return `<pre class="guide-code-block"${langAttr}><code>${escapeHtml((lines || []).join("\n"))}</code></pre>`;
+}
+
+function renderGuideInline(value) {
+  return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function guidePlainText(value) {
+  return guideContentToMarkdown(value)
+    .replace(/[#*_`>-]/g, "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function guideContentToMarkdown(content) {
+  const raw = String(content || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = JSON.parse(raw);
+    const blocks = Array.isArray(parsed) ? parsed : parsed?.blocks;
+    if (Array.isArray(blocks)) {
+      return blocks.map(guideBlockToMarkdown).filter(Boolean).join("\n\n");
+    }
+  } catch {
+    // Current editor stores plain Markdown; invalid JSON is simply Markdown text.
+  }
+
+  return raw;
+}
+
+function guideBlockToMarkdown(block = {}) {
+  if (block.type === "image" && block.url) {
+    return `![${block.alt || block.caption || "攻略圖片"}](${block.url})`;
+  }
+  if (block.type === "callout") {
+    return [block.title ? `> **${block.title}**` : "", block.text ? String(block.text).split("\n").map((line) => `> ${line}`).join("\n") : ""].filter(Boolean).join("\n");
+  }
+  return String(block.text || "").trim();
+}
+
+function safeGuideImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^(https?:)?\/\//i.test(url)) return url;
+  if (/^(?:\/|\.{1,2}\/|assets\/|images\/)[^\s<>"']+$/i.test(url)) return url;
+  return "";
+}
+
 function exportAwardsExcel() {
   try {
     ensureEventLoaded();
@@ -3859,6 +4649,9 @@ function rememberInvalidPins(error) {
 
 function friendlyError(message) {
   const text = String(message || "");
+  if (text.includes("guide_posts") || text.includes("guide_image_upload_paths") || text.includes("guide_image_delete_paths") || text.includes("list_guide_posts_admin") || text.includes("upsert_guide_post") || text.includes("delete_guide_post") || text.includes("create_guide_image_upload_path") || text.includes("create_guide_image_delete_paths") || text.includes("list_unused_guide_images") || text.includes("finalize_guide_image_deletes")) return "攻略資料庫尚未更新，請先套用最新 schema。";
+  if (text.includes("Bucket not found") || text.includes("bucket not found") || text.includes("rooc-guide-images")) return "攻略圖片儲存空間尚未建立，請先套用最新 schema。";
+  if (text.includes("violates row-level security policy") && text.includes("storage.objects")) return "攻略圖片儲存權限尚未開通，請先套用最新 schema。";
   const normalized = text
     .replace(/^Error:\s*/i, "")
     .replace(/\s+/g, " ")

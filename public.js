@@ -17,12 +17,39 @@ const publicState = {
   liveRevealMode: "roller",
   liveFireworks: null,
   liveEffectCleanupId: null,
-  tableRenderKeys: new Map()
+  tableRenderKeys: new Map(),
+  guides: [],
+  currentGuideSlug: "",
+  guidesLoaded: false,
+  members: [],
+  membersLoaded: false,
+  memberSort: {
+    key: "member_no",
+    direction: "asc"
+  }
 };
 
 const PUBLIC_REFRESH_INTERVAL = 2500;
 const PUBLIC_DRAW_EFFECT_CLEANUP_MS = 2600;
 const PUBLIC_TABLE_RENDER_LIMIT = 120;
+const PUBLIC_TAB_KEYS = ["verify", "guides", "members"];
+const PUBLIC_STORAGE_KEYS = {
+  activeTab: "rooc_public_active_tab"
+};
+let publicGuideSearchTimer = null;
+let publicMemberSearchTimer = null;
+
+const publicMemberCollator = new Intl.Collator("zh-Hant", {
+  numeric: true,
+  sensitivity: "base"
+});
+
+const publicMemberSortColumns = [
+  { key: "member_no", label: "編號" },
+  { key: "role_name", label: "角色名稱" },
+  { key: "occupation", label: "職業" },
+  { key: "joined_dc", label: "DC" }
+];
 
 const drawStatusText = {
   pending: "待處理",
@@ -36,11 +63,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   hydrateConfig();
   bindPublicPage();
   await initializePublicPage();
+  switchPublicTab(resolvePublicInitialTab(), { persist: false });
   refreshIcons();
 });
 
 function $(selector) {
   return document.querySelector(selector);
+}
+
+function $all(selector) {
+  return Array.from(document.querySelectorAll(selector));
 }
 
 function setText(selector, text) {
@@ -50,10 +82,37 @@ function setText(selector, text) {
   });
 }
 
+function readLocalValue(key) {
+  try {
+    return window.localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLocalValue(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Browser storage can be unavailable in private or locked-down contexts.
+  }
+}
+
 function bindPublicPage() {
+  $all("[data-public-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => switchPublicTab(tab.dataset.publicTab));
+  });
   $("#public-event-form").addEventListener("submit", handleLoadPublicEvent);
   $("#public-event-select").addEventListener("change", handlePublicEventAutoLoad);
   $("#refresh-public-events").addEventListener("click", handleRefreshPublicEvents);
+  $("#public-guide-search-form").addEventListener("submit", handlePublicGuideSearch);
+  $("#public-guide-search-form").elements.query.addEventListener("input", schedulePublicGuideSearch);
+  $("#refresh-public-guides").addEventListener("click", handleRefreshPublicGuides);
+  $("#public-guide-list").addEventListener("click", handlePublicGuideListClick);
+  $("#public-member-search-form").addEventListener("submit", handlePublicMemberSearch);
+  $("#public-member-search-form").elements.query.addEventListener("input", schedulePublicMemberSearch);
+  $("#refresh-public-members").addEventListener("click", handleRefreshPublicMembers);
+  $("#public-member-table-head").addEventListener("click", handlePublicMemberSortClick);
   $("#public-detail").addEventListener("click", handlePublicRosterButtonClick);
   $("#public-draw-table").addEventListener("click", handleDrawVerifyClick);
   $("#close-public-live").addEventListener("click", closePublicLiveDialog);
@@ -100,6 +159,46 @@ function bindPublicPage() {
   });
 }
 
+function switchPublicTab(tabName = "verify", options = {}) {
+  const activeTab = PUBLIC_TAB_KEYS.includes(tabName) ? tabName : "verify";
+  if (options.persist !== false) {
+    writeLocalValue(PUBLIC_STORAGE_KEYS.activeTab, activeTab);
+    updateTabHash(activeTab);
+  }
+  $all("[data-public-tab]").forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.publicTab === activeTab);
+  });
+  $all("[data-public-panel]").forEach((panel) => {
+    const active = panel.dataset.publicPanel === activeTab;
+    panel.hidden = !active;
+    panel.classList.toggle("is-active", active);
+  });
+
+  if (activeTab === "guides") {
+    void preparePublicGuidePanel();
+  }
+  if (activeTab === "members") {
+    void preparePublicMemberPanel();
+  }
+  refreshIcons();
+}
+
+function resolvePublicInitialTab() {
+  const hashTab = normalizeTabName(window.location.hash.slice(1), PUBLIC_TAB_KEYS);
+  if (hashTab) return hashTab;
+  return normalizeTabName(readLocalValue(PUBLIC_STORAGE_KEYS.activeTab), PUBLIC_TAB_KEYS) || "verify";
+}
+
+function normalizeTabName(value, allowedTabs) {
+  const tabName = String(value || "").replace(/^#/, "").trim();
+  return allowedTabs.includes(tabName) ? tabName : "";
+}
+
+function updateTabHash(tabName) {
+  if (window.location.hash.slice(1) === tabName) return;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${tabName}`);
+}
+
 async function initializePublicPage() {
   if (!publicState.client) return;
 
@@ -127,7 +226,7 @@ function hydrateConfig() {
     showToast(`找不到資料庫環境「${publicState.environmentState.requestedEnvironmentMissing}」，已改用預設設定。`, "warning");
   }
   if (!publicState.client) {
-    showToast(`「${getActiveEnvironmentLabel()}」Supabase 尚未設定，無法載入公開驗證資料。`, "error");
+    showToast(`「${getActiveEnvironmentLabel()}」Supabase 尚未設定，無法載入抽獎紀錄資料。`, "error");
   }
 }
 
@@ -247,6 +346,312 @@ function renderPublicEventOptions(preferredSlug = "") {
     disabled: publicState.events.length === 0
   });
   setText("#public-status", publicState.events.length === 0 ? "沒有紀錄" : `${publicState.events.length} 場`);
+}
+
+async function preparePublicGuidePanel() {
+  if (!publicState.client) return;
+  if (publicState.guidesLoaded) return;
+
+  await withBusy($("#public-panel-guides"), async () => {
+    await loadPublicGuides();
+  });
+}
+
+async function handlePublicGuideSearch(event) {
+  event.preventDefault();
+  clearPublicGuideSearchTimer();
+  await withBusy($("#public-guide-search-form"), loadPublicGuides);
+}
+
+function schedulePublicGuideSearch(delay = 300) {
+  clearPublicGuideSearchTimer();
+  publicGuideSearchTimer = window.setTimeout(() => {
+    if (!publicState.client) return;
+    void withBusy($("#public-guide-search-form"), loadPublicGuides);
+  }, delay);
+}
+
+function clearPublicGuideSearchTimer() {
+  if (publicGuideSearchTimer) {
+    window.clearTimeout(publicGuideSearchTimer);
+    publicGuideSearchTimer = null;
+  }
+}
+
+async function handleRefreshPublicGuides() {
+  await withBusy($("#public-panel-guides"), async () => {
+    await loadPublicGuides();
+    showToast("攻略已刷新。", "success");
+  });
+}
+
+async function loadPublicGuides() {
+  const form = $("#public-guide-search-form");
+  const data = new FormData(form);
+  const rows = await rpc("list_public_guide_posts", {
+    p_query: data.get("query"),
+    p_category: null
+  });
+  publicState.guides = rows || [];
+  publicState.guidesLoaded = true;
+  const hasCurrentGuide = publicState.guides.some((guide) => guide.slug === publicState.currentGuideSlug);
+  if (!hasCurrentGuide) {
+    publicState.currentGuideSlug = "";
+  }
+  renderPublicGuideList();
+  setText("#public-guide-status", publicState.guides.length === 0 ? "沒有攻略" : `${publicState.guides.length} 篇`);
+
+  if (publicState.guides.length > 0 && !hasCurrentGuide) {
+    await loadPublicGuide(publicState.guides[0].slug);
+  } else if (publicState.guides.length === 0) {
+    publicState.currentGuideSlug = "";
+    $("#public-guide-reader").innerHTML = '<p class="guide-muted">目前沒有符合條件的攻略。</p>';
+  }
+}
+
+function renderPublicGuideList() {
+  const list = $("#public-guide-list");
+  if (!list) return;
+
+  if (!publicState.guidesLoaded) {
+    list.innerHTML = "";
+    return;
+  }
+
+  if (publicState.guides.length === 0) {
+    list.innerHTML = '<div class="guide-list-empty">目前沒有攻略。</div>';
+    return;
+  }
+
+  list.innerHTML = publicState.guides.map((guide) => {
+    const isActive = guide.slug === publicState.currentGuideSlug;
+    return `
+      <button class="guide-list-item${isActive ? " is-active" : ""}" type="button" data-guide-slug="${escapeHtml(guide.slug)}">
+        <span class="guide-list-meta">
+          <span class="guide-category">${escapeHtml(guide.category || "一般")}</span>
+          ${guide.is_pinned ? '<span class="guide-pin">置頂</span>' : ""}
+        </span>
+        <strong>${escapeHtml(guide.title)}</strong>
+        <span>${escapeHtml(guide.summary || "沒有摘要。")}</span>
+        <small>${escapeHtml(formatPublicGuideListTime(guide))}</small>
+      </button>
+    `;
+  }).join("");
+}
+
+function formatPublicGuideListTime(guide) {
+  if (guide?.updated_at) return `更新：${formatDate(guide.updated_at)}`;
+  if (guide?.published_at) return `發布：${formatDate(guide.published_at)}`;
+  return "尚無時間";
+}
+
+async function handlePublicGuideListClick(event) {
+  const button = event.target.closest("[data-guide-slug]");
+  if (!button) return;
+  await withBusy($("#public-guide-reader"), async () => {
+    await loadPublicGuide(button.dataset.guideSlug);
+  });
+}
+
+async function loadPublicGuide(slug) {
+  const rows = await rpc("get_public_guide_post", {
+    p_slug: slug
+  });
+  const guide = rows?.[0];
+  if (!guide) {
+    throw new Error("找不到攻略。");
+  }
+
+  publicState.currentGuideSlug = guide.slug;
+  renderPublicGuideList();
+  $("#public-guide-reader").innerHTML = `
+    <header class="guide-reader-head">
+      <span class="guide-category">${escapeHtml(guide.category || "一般")}</span>
+      <h1>${escapeHtml(guide.title)}</h1>
+      ${guide.summary ? `<p class="guide-summary-text">${escapeHtml(guide.summary)}</p>` : ""}
+      <small>${escapeHtml(formatPublicGuideReaderTime(guide))}</small>
+    </header>
+    ${renderGuideContent(guide.content)}
+  `;
+}
+
+function formatPublicGuideReaderTime(guide) {
+  const parts = [];
+  if (guide?.published_at) {
+    parts.push(`發布：${formatDate(guide.published_at)}`);
+  }
+  if (guideWasUpdatedAfterPublish(guide)) {
+    parts.push(`更新：${formatDate(guide.updated_at)}`);
+  } else if (!guide?.published_at && guide?.updated_at) {
+    parts.push(`更新：${formatDate(guide.updated_at)}`);
+  }
+  return parts.join(" ｜ ") || "尚無時間";
+}
+
+function guideWasUpdatedAfterPublish(guide) {
+  if (!guide?.published_at || !guide?.updated_at) return false;
+  const publishedTime = new Date(guide.published_at).getTime();
+  const updatedTime = new Date(guide.updated_at).getTime();
+  if (Number.isNaN(publishedTime) || Number.isNaN(updatedTime)) return false;
+  return updatedTime - publishedTime > 1000;
+}
+
+async function preparePublicMemberPanel() {
+  if (!publicState.client) return;
+  if (publicState.membersLoaded) return;
+
+  await withBusy($("#public-panel-members"), async () => {
+    await loadPublicMembers();
+  });
+}
+
+async function handlePublicMemberSearch(event) {
+  event.preventDefault();
+  clearPublicMemberSearchTimer();
+  await withBusy($("#public-member-search-form"), loadPublicMembers);
+}
+
+function schedulePublicMemberSearch(delay = 300) {
+  clearPublicMemberSearchTimer();
+  publicMemberSearchTimer = window.setTimeout(() => {
+    if (!publicState.client) return;
+    void withBusy($("#public-member-search-form"), loadPublicMembers);
+  }, delay);
+}
+
+function clearPublicMemberSearchTimer() {
+  if (publicMemberSearchTimer) {
+    window.clearTimeout(publicMemberSearchTimer);
+    publicMemberSearchTimer = null;
+  }
+}
+
+async function handleRefreshPublicMembers() {
+  await withBusy($("#public-panel-members"), async () => {
+    await loadPublicMembers();
+    showToast("成員已刷新。", "success");
+  });
+}
+
+async function loadPublicMembers() {
+  const form = $("#public-member-search-form");
+  const data = new FormData(form);
+  const rows = await rpc("list_public_rooc_members", {
+    p_query: data.get("query"),
+    p_occupation: null
+  });
+  publicState.members = rows || [];
+  publicState.membersLoaded = true;
+  renderPublicMembers();
+  setText("#public-member-status", publicState.members.length === 0 ? "沒有成員" : `${publicState.members.length} 位`);
+}
+
+function renderPublicMembers() {
+  const list = $("#public-member-list");
+  if (!list) return;
+  renderPublicMemberSortHead();
+
+  if (!publicState.membersLoaded) {
+    list.innerHTML = "";
+    return;
+  }
+
+  if (publicState.members.length === 0) {
+    list.innerHTML = '<tr><td colspan="4" class="empty-cell">沒有符合條件的成員。</td></tr>';
+    return;
+  }
+
+  list.innerHTML = getSortedPublicMembers().map((member) => `
+    <tr>
+      <td>${escapeHtml(member.member_no || "-")}</td>
+      <td>${escapeHtml(member.role_name || "")}</td>
+      <td>${escapeHtml(member.occupation || "未分類")}</td>
+      <td>
+        <span class="table-badge ${member.joined_dc ? "is-on" : "is-off"}">${member.joined_dc ? "已加入" : "未加入"}</span>
+      </td>
+    </tr>
+  `).join("");
+  refreshIcons();
+}
+
+function renderPublicMemberSortHead() {
+  const head = $("#public-member-table-head");
+  if (!head) return;
+
+  head.innerHTML = `
+    <tr>
+      ${publicMemberSortColumns.map((column) => `
+        <th>
+          <button
+            class="sort-button${column.key === publicState.memberSort.key ? " is-active" : ""}"
+            type="button"
+            data-public-member-sort="${column.key}"
+            aria-pressed="${column.key === publicState.memberSort.key ? "true" : "false"}"
+          >
+            <span>${escapeHtml(column.label)}</span>
+            <span class="sort-icon">
+              <i data-lucide="${publicMemberSortIconFor(column.key)}"></i>
+            </span>
+          </button>
+        </th>
+      `).join("")}
+    </tr>
+  `;
+  refreshIcons();
+}
+
+function handlePublicMemberSortClick(event) {
+  const button = event.target.closest("[data-public-member-sort]");
+  if (!button) return;
+  sortPublicMembersBy(button.dataset.publicMemberSort);
+}
+
+function sortPublicMembersBy(key) {
+  if (!publicMemberSortColumns.some((column) => column.key === key)) return;
+
+  if (publicState.memberSort.key === key) {
+    publicState.memberSort.direction = publicState.memberSort.direction === "asc" ? "desc" : "asc";
+  } else {
+    publicState.memberSort = {
+      key,
+      direction: "asc"
+    };
+  }
+
+  renderPublicMembers();
+}
+
+function publicMemberSortIconFor(key) {
+  if (key !== publicState.memberSort.key) return "arrow-up-down";
+  return publicState.memberSort.direction === "asc" ? "arrow-up" : "arrow-down";
+}
+
+function getSortedPublicMembers() {
+  const direction = publicState.memberSort.direction === "desc" ? -1 : 1;
+  return publicState.members
+    .map((member, index) => ({ member, index }))
+    .sort((left, right) => {
+      const result = comparePublicMemberValue(left.member, right.member, publicState.memberSort.key);
+      if (result !== 0) return result * direction;
+      return left.index - right.index;
+    })
+    .map((item) => item.member);
+}
+
+function comparePublicMemberValue(left, right, key) {
+  if (key === "joined_dc") {
+    return publicBooleanSortValue(right[key]) - publicBooleanSortValue(left[key]);
+  }
+
+  return publicMemberCollator.compare(publicMemberSortText(left[key]), publicMemberSortText(right[key]));
+}
+
+function publicBooleanSortValue(value) {
+  return value ? 1 : 0;
+}
+
+function publicMemberSortText(value) {
+  return String(value || "").trim();
 }
 
 async function loadPublicEvent(slug, options = {}) {
@@ -1167,6 +1572,7 @@ function cleanRequired(value, message) {
 
 function friendlyError(message) {
   const text = String(message || "");
+  if (text.includes("list_public_guide_posts") || text.includes("get_public_guide_post") || text.includes("list_public_rooc_members")) return "公開資料庫功能尚未更新，請先套用最新 schema。";
   if (text.includes("raffle_events_slug_check")) return "活動代碼格式不正確。";
   if (text.includes("new row for relation") && text.includes("violates check constraint")) return "資料格式不符合系統規則。";
   if (text.includes("duplicate key value violates unique constraint")) return "資料已存在，請確認是否重複。";
@@ -1180,6 +1586,202 @@ function friendlyError(message) {
     .replace(/^Error:\s*/i, "")
     .replace(/JSON object requested, multiple .* rows returned/i, "資料重複，請檢查設定。")
     .trim();
+}
+
+function renderGuideContent(content) {
+  return renderGuideBlocks(parseGuideContent(content)) || '<p class="guide-muted">這篇攻略目前沒有內容。</p>';
+}
+
+function parseGuideContent(content) {
+  const raw = String(content || "").trim();
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    const blocks = Array.isArray(parsed) ? parsed : parsed?.blocks;
+    return Array.isArray(blocks) ? blocks.map(normalizeGuideBlock) : [];
+  } catch {
+    return [normalizeGuideBlock({ type: "text", text: raw })];
+  }
+}
+
+function normalizeGuideBlock(block = {}) {
+  const type = ["text", "image", "callout"].includes(block.type) ? block.type : "text";
+
+  if (type === "image") {
+    return {
+      type,
+      url: String(block.url || "").trim(),
+      alt: String(block.alt || "").trim(),
+      caption: String(block.caption || "").trim()
+    };
+  }
+
+  if (type === "callout") {
+    return {
+      type,
+      title: String(block.title || "").trim(),
+      text: String(block.text || "")
+    };
+  }
+
+  return {
+    type: "text",
+    text: String(block.text || "")
+  };
+}
+
+function renderGuideBlocks(blocks) {
+  return (Array.isArray(blocks) ? blocks : [])
+    .map(normalizeGuideBlock)
+    .map((block) => {
+      if (block.type === "image") {
+        const safeUrl = safeGuideImageUrl(block.url);
+        if (!safeUrl) return "";
+        return `
+          <figure class="guide-figure">
+            <img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(block.alt || block.caption || "攻略圖片")}">
+            ${block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""}
+          </figure>
+        `;
+      }
+
+      if (block.type === "callout") {
+        if (!block.title && !block.text.trim()) return "";
+        return `
+          <aside class="guide-callout">
+            ${block.title ? `<strong class="guide-callout-title">${escapeHtml(block.title)}</strong>` : ""}
+            ${renderGuideMarkdown(block.text)}
+          </aside>
+        `;
+      }
+
+      return renderGuideMarkdown(block.text);
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function renderGuideMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let listItems = [];
+  let paragraph = [];
+  let codeBlock = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    html.push(`<p>${renderGuideInline(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    html.push(`<ul>${listItems.map((item) => `<li>${renderGuideInline(item)}</li>`).join("")}</ul>`);
+    listItems = [];
+  };
+  const flushCodeBlock = () => {
+    if (!codeBlock) return;
+    html.push(renderGuideCodeBlock(codeBlock.lines, codeBlock.language));
+    codeBlock = null;
+  };
+
+  lines.forEach((line) => {
+    const text = line.trim();
+    if (codeBlock) {
+      if (/^```\s*$/.test(text)) {
+        flushCodeBlock();
+        return;
+      }
+      codeBlock.lines.push(line);
+      return;
+    }
+
+    const codeFence = text.match(/^```\s*([A-Za-z0-9_+.#-]*!?)?\s*$/);
+    if (codeFence) {
+      flushParagraph();
+      flushList();
+      codeBlock = {
+        language: String(codeFence[1] || "").replace(/!$/, ""),
+        lines: []
+      };
+      return;
+    }
+
+    if (!text) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const heading = text.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length + 1;
+      html.push(`<h${level}>${renderGuideInline(heading[2])}</h${level}>`);
+      return;
+    }
+
+    const quote = text.match(/^>\s+(.+)$/);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      html.push(`<blockquote>${renderGuideInline(quote[1])}</blockquote>`);
+      return;
+    }
+
+    const image = text.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (image) {
+      flushParagraph();
+      flushList();
+      const safeUrl = safeGuideImageUrl(image[2]);
+      if (safeUrl) {
+        html.push(`
+          <figure class="guide-figure">
+            <img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(image[1] || "攻略圖片")}">
+          </figure>
+        `);
+      }
+      return;
+    }
+
+    const bullet = text.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push(bullet[1]);
+      return;
+    }
+
+    flushList();
+    paragraph.push(text);
+  });
+
+  flushCodeBlock();
+  flushParagraph();
+  flushList();
+  return html.join("");
+}
+
+function renderGuideCodeBlock(lines, language = "") {
+  const lang = String(language || "").replace(/[^A-Za-z0-9_+.#-]/g, "");
+  const langAttr = lang ? ` data-language="${escapeHtml(lang)}"` : "";
+  return `<pre class="guide-code-block"${langAttr}><code>${escapeHtml((lines || []).join("\n"))}</code></pre>`;
+}
+
+function renderGuideInline(value) {
+  return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function safeGuideImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^(https?:)?\/\//i.test(url)) return url;
+  if (/^(?:\/|\.{1,2}\/|assets\/|images\/)[^\s<>"']+$/i.test(url)) return url;
+  return "";
 }
 
 function asArray(value) {
