@@ -12,14 +12,6 @@ defineProps({
     type: String,
     default: "選擇活動"
   },
-  submitIcon: {
-    type: String,
-    default: "log-in"
-  },
-  submitText: {
-    type: String,
-    default: "載入"
-  },
   refreshButtonId: {
     type: String,
     required: true
@@ -50,21 +42,19 @@ defineProps({
       <option value="">{{ defaultOption }}</option>
     </select>
   </label>
-  <button class="btn primary" type="submit">
-    <i :data-lucide="submitIcon"></i>
-    <span>{{ submitText }}</span>
-  </button>
-  <button class="btn secondary" type="button" :id="refreshButtonId">
-    <i :data-lucide="refreshIcon"></i>
-    <span>{{ refreshText }}</span>
-  </button>
-  <button
-    v-if="createButtonId"
-    class="btn secondary"
-    type="button"
-    :id="createButtonId"
-  >
-    <i data-lucide="plus"></i>
-    <span>{{ createText }}</span>
-  </button>
+  <div class="toolbar-actions">
+    <button class="btn secondary" type="button" :id="refreshButtonId">
+      <i :data-lucide="refreshIcon"></i>
+      <span>{{ refreshText }}</span>
+    </button>
+    <button
+      v-if="createButtonId"
+      class="btn secondary"
+      type="button"
+      :id="createButtonId"
+    >
+      <i data-lucide="plus"></i>
+      <span>{{ createText }}</span>
+    </button>
+  </div>
 </template>

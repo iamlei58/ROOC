@@ -69,19 +69,35 @@ onMounted(() => {
           />
         </div>
 
-        <form class="toolbar-form" id="load-event-form">
-          <EventLoadToolbarContent
-            field-label="未完成活動"
-            select-id="event-title-select"
-            default-option="選擇活動"
-            submit-icon="log-in"
-            submit-text="載入"
-            refresh-button-id="refresh-events"
-            refresh-text="刷新活動"
-            create-button-id="open-create-event-dialog"
-            create-text="建立活動"
-          />
-        </form>
+        <section class="console-toolbar" aria-label="活動工具列">
+          <div class="console-toolbar-group">
+            <form class="toolbar-form" id="load-event-form">
+              <EventLoadToolbarContent
+                field-label="未完成活動"
+                select-id="event-title-select"
+                default-option="選擇活動"
+                refresh-button-id="refresh-events"
+                refresh-text="刷新活動"
+                create-button-id="open-create-event-dialog"
+                create-text="建立活動"
+              />
+            </form>
+          </div>
+
+          <div class="console-toolbar-group console-toolbar-group-actions">
+            <p class="section-label">目前活動</p>
+            <div class="button-row console-actions" id="console-action-bar" aria-label="目前活動操作">
+              <button class="btn secondary" type="button" id="toggle-event-status" disabled>
+                <i data-lucide="lock"></i>
+                <span>活動狀態</span>
+              </button>
+              <button class="btn danger" type="button" id="delete-event" disabled>
+                <i data-lucide="trash-2"></i>
+                <span>刪除活動</span>
+              </button>
+            </div>
+          </div>
+        </section>
 
         <div class="empty-state" id="console-empty">
           <EmptyState message="載入活動後開始抽獎。" />
@@ -122,24 +138,6 @@ onMounted(() => {
               <div class="draw-odds-card" id="draw-odds-card" hidden></div>
               <div class="pending-card" id="pending-card" hidden></div>
 
-              <div class="button-row console-actions">
-                <button class="btn secondary" type="button" id="refresh-event">
-                  <i data-lucide="refresh-cw"></i>
-                  <span>刷新</span>
-                </button>
-                <button class="btn secondary" type="button" id="reopen-event">
-                  <i data-lucide="unlock"></i>
-                  <span>重新開放</span>
-                </button>
-                <button class="btn secondary" type="button" id="close-event">
-                  <i data-lucide="lock"></i>
-                  <span>結束活動</span>
-                </button>
-                <button class="btn danger" type="button" id="delete-event">
-                  <i data-lucide="trash-2"></i>
-                  <span>刪除活動</span>
-                </button>
-              </div>
             </section>
           </div>
 
@@ -229,17 +227,33 @@ onMounted(() => {
           />
         </div>
 
-        <form class="toolbar-form compact-toolbar" id="history-event-form">
-          <EventLoadToolbarContent
-            field-label="已結束活動"
-            select-id="history-event-select"
-            default-option="選擇歷史活動"
-            submit-icon="log-in"
-            submit-text="載入"
-            refresh-button-id="refresh-history-events"
-            refresh-text="刷新歷史"
-          />
-        </form>
+        <section class="console-toolbar" aria-label="歷史活動工具列">
+          <div class="console-toolbar-group">
+            <form class="toolbar-form" id="history-event-form">
+              <EventLoadToolbarContent
+                field-label="已結束活動"
+                select-id="history-event-select"
+                default-option="選擇歷史活動"
+                refresh-button-id="refresh-history-events"
+                refresh-text="刷新歷史"
+              />
+            </form>
+          </div>
+
+          <div class="console-toolbar-group console-toolbar-group-actions">
+            <p class="section-label">歷史活動</p>
+            <div class="button-row console-actions" id="history-action-bar" aria-label="歷史活動操作">
+              <button class="btn secondary" type="button" id="reopen-history-event" disabled>
+                <i data-lucide="unlock"></i>
+                <span>重新開放</span>
+              </button>
+              <button class="btn danger" type="button" id="delete-history-event" disabled>
+                <i data-lucide="trash-2"></i>
+                <span>刪除活動</span>
+              </button>
+            </div>
+          </div>
+        </section>
 
         <div class="empty-state" id="history-empty">
           <EmptyState message="載入已結束活動後查看歷史資訊。" />
@@ -248,12 +262,6 @@ onMounted(() => {
         <div class="history-detail" id="history-detail" hidden>
           <section class="info-block">
             <div id="admin-history-event-header"></div>
-            <div class="button-row">
-              <button class="btn danger" type="button" id="delete-history-event">
-                <i data-lucide="trash-2"></i>
-                <span>刪除活動</span>
-              </button>
-            </div>
           </section>
 
           <section class="stats-grid" id="admin-history-stats-grid"></section>

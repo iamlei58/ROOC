@@ -45,8 +45,6 @@ onMounted(() => {
           field-label="公開活動"
           select-id="public-event-select"
           default-option="選擇活動"
-          submit-icon="search"
-          submit-text="查看"
           refresh-button-id="refresh-public-events"
           refresh-text="刷新"
         />

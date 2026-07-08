@@ -33,6 +33,7 @@ const state = {
   memberImportRows: [],
   memberImportExisting: new Map(),
   eventSlugHint: "",
+  eventMutationKey: "",
   drawAnimationMode: "fireworks",
   memberSort: {
     key: "member_no",
@@ -150,6 +151,7 @@ function renderAdminTabs(activeTab = "console") {
 
 function bindForms() {
   $("#load-event-form").addEventListener("submit", handleLoadEvent);
+  bindAutoLoadSelect("#event-title-select", loadSelectedEventFromSelect);
   $("#refresh-events").addEventListener("click", handleRefreshEvents);
   $("#open-create-event-dialog").addEventListener("click", openCreateEventDialog);
   $("#close-create-event-dialog").addEventListener("click", closeCreateEventDialog);
@@ -173,21 +175,21 @@ function bindForms() {
   $("#pending-card").addEventListener("click", handleClearPendingTransfer);
   $("#pending-card").addEventListener("submit", handlePendingTransfer);
   $("#pending-card").addEventListener("change", handlePendingTransferSelection);
-  $("#refresh-event").addEventListener("click", () => reloadEvent());
+  $("#toggle-event-status").addEventListener("click", handleToggleEventStatus);
   $all(".stats-grid").forEach((grid) => {
     grid.addEventListener("click", handleRosterButtonClick);
   });
-  $("#close-event").addEventListener("click", () => setEventStatus("closed"));
-  $("#reopen-event").addEventListener("click", () => setEventStatus("live"));
   $("#delete-event").addEventListener("click", () => deleteLoadedEvent("console"));
   $("#export-awards").addEventListener("click", exportAwardsExcel);
   $("#export-draw-log").addEventListener("click", exportDrawLogExcel);
   $("#draw-log-table").addEventListener("click", handleAdminDrawVerifyClick);
   $("#history-event-form").addEventListener("submit", handleLoadHistoryEvent);
+  bindAutoLoadSelect("#history-event-select", loadSelectedHistoryEventFromSelect);
   $("#refresh-history-events").addEventListener("click", handleRefreshHistoryEvents);
   $("#export-history-awards").addEventListener("click", exportHistoryAwardsExcel);
   $("#export-history-draw-log").addEventListener("click", exportHistoryDrawLogExcel);
   $("#history-draw-log-table").addEventListener("click", handleAdminDrawVerifyClick);
+  $("#reopen-history-event").addEventListener("click", reopenHistoryEvent);
   $("#delete-history-event").addEventListener("click", () => deleteLoadedEvent("history"));
   $("#change-admin-pin").addEventListener("click", openChangeAdminPinDialog);
   $("#logout-admin").addEventListener("click", handleAdminLogout);
@@ -308,7 +310,7 @@ async function validateAppAdminPassword(password) {
 }
 
 async function loadAdminBootstrapData() {
-  await refreshOpenEvents();
+  await refreshOpenEvents("", { autoLoadSelection: true });
   await refreshHistoryEvents();
   await refreshPrizeProviderMembers();
 
@@ -472,6 +474,8 @@ function forgetAppAdminPin() {
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
   setText("#console-status", "未載入");
+  syncConsoleActionButtons();
+  syncHistoryActionButtons();
   renderOpenEventOptions();
   renderHistoryEventOptions();
   clearHistoryDetail();
@@ -543,13 +547,39 @@ function syncEnhancedSelect(select) {
   }
 }
 
-async function refreshOpenEvents(preferredSlug = "") {
+function bindAutoLoadSelect(selector, handler) {
+  const select = $(selector);
+  if (!select) return;
+
+  select.addEventListener("change", (event) => {
+    if (isSelect2Active(select)) return;
+    void handler();
+  });
+
+  if (window.jQuery?.fn?.select2) {
+    window.jQuery(select).on("select2:select.roocAutoLoad", () => {
+      void handler();
+    });
+  }
+}
+
+function isSelect2Active(select) {
+  return Boolean(select && window.jQuery?.fn?.select2 && window.jQuery(select).data("select2"));
+}
+
+async function refreshOpenEvents(preferredSlug = "", options = {}) {
   const rows = await rpc("list_open_raffle_events", {
     p_app_admin_pin: state.appAdminPin
   });
   state.openEvents = (rows || []).filter((event) => event.status === "live");
   const loadedLiveSlug = state.event?.status === "live" ? state.event.slug : "";
-  renderOpenEventOptions(preferredSlug || loadedLiveSlug || state.eventSlugHint);
+  const selectionHint = preferredSlug || loadedLiveSlug || state.eventSlugHint;
+  renderOpenEventOptions(selectionHint);
+
+  const selectedSlug = resolveOpenEventSelection(selectionHint);
+  if (options.autoLoadSelection && !state.event && selectedSlug) {
+    await loadEvent(selectedSlug);
+  }
 }
 
 function renderOpenEventOptions(preferredSlug = "") {
@@ -561,9 +591,9 @@ function renderOpenEventOptions(preferredSlug = "") {
   destroyEnhancedSelect(select);
   const options = state.openEvents.map((event) => ({
     value: event.slug,
-    label: `${event.title} / ${formatDate(event.created_at)}`
+    label: event.title
   }));
-  const nextValue = current && state.openEvents.some((event) => event.slug === current) ? current : "";
+  const nextValue = resolveOpenEventSelection(current);
 
   if (nextValue) {
     state.eventSlugHint = nextValue;
@@ -572,7 +602,6 @@ function renderOpenEventOptions(preferredSlug = "") {
     writeLocalValue(STORAGE_KEYS.eventSlug, "");
   }
 
-  $("#load-event-form button[type='submit']").disabled = !hasOpenEvents;
   window.ROOC_VUE_SELECT_OPTIONS?.render?.({
     targetSelector: "#event-title-select",
     placeholder: hasOpenEvents ? "選擇活動" : "目前沒有未完成活動",
@@ -589,12 +618,31 @@ function renderOpenEventOptions(preferredSlug = "") {
   });
 }
 
-async function refreshHistoryEvents(preferredSlug = "") {
+function resolveOpenEventSelection(current = "") {
+  const cleanCurrent = String(current || "").trim();
+  if (cleanCurrent && state.openEvents.some((event) => event.slug === cleanCurrent)) {
+    return cleanCurrent;
+  }
+
+  if (state.openEvents.length === 1) {
+    return state.openEvents[0].slug;
+  }
+
+  return "";
+}
+
+async function refreshHistoryEvents(preferredSlug = "", options = {}) {
   const rows = await rpc("list_closed_raffle_events", {
     p_app_admin_pin: state.appAdminPin
   });
   state.historyEvents = rows || [];
-  renderHistoryEventOptions(preferredSlug || state.historyEvent?.slug || "");
+  const selectionHint = preferredSlug || state.historyEvent?.slug || "";
+  renderHistoryEventOptions(selectionHint);
+
+  const selectedSlug = resolveHistoryEventSelection(selectionHint);
+  if (options.autoLoadSelection && !state.historyEvent && selectedSlug) {
+    await loadHistoryEvent(selectedSlug);
+  }
 }
 
 function renderHistoryEventOptions(preferredSlug = "") {
@@ -608,9 +656,8 @@ function renderHistoryEventOptions(preferredSlug = "") {
     value: event.slug,
     label: `${event.title} / ${formatDate(event.closed_at || event.created_at)}`
   }));
-  const nextValue = current && state.historyEvents.some((event) => event.slug === current) ? current : "";
+  const nextValue = resolveHistoryEventSelection(current);
 
-  $("#history-event-form button[type='submit']").disabled = !hasHistoryEvents;
   window.ROOC_VUE_SELECT_OPTIONS?.render?.({
     targetSelector: "#history-event-select",
     placeholder: hasHistoryEvents ? "選擇歷史活動" : "目前沒有已結束活動",
@@ -625,6 +672,19 @@ function renderHistoryEventOptions(preferredSlug = "") {
       syncEnhancedSelect(select);
     }
   });
+}
+
+function resolveHistoryEventSelection(current = "") {
+  const cleanCurrent = String(current || "").trim();
+  if (cleanCurrent && state.historyEvents.some((event) => event.slug === cleanCurrent)) {
+    return cleanCurrent;
+  }
+
+  if (state.historyEvents.length === 1) {
+    return state.historyEvents[0].slug;
+  }
+
+  return "";
 }
 
 async function refreshPrizeProviderMembers() {
@@ -835,10 +895,15 @@ function renderDrawOdds() {
 
 async function handleLoadEvent(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  await loadSelectedEventFromSelect(event.currentTarget);
+}
+
+async function loadSelectedEventFromSelect(form = $("#load-event-form")) {
   const data = new FormData(form);
+  const slug = String(data.get("slug") || "").trim();
+  if (!slug) return;
+
   await withBusy(form, async () => {
-    const slug = cleanRequired(data.get("slug"), "請選擇活動。");
     await loadEvent(slug);
   });
 }
@@ -846,7 +911,7 @@ async function handleLoadEvent(event) {
 async function handleRefreshEvents() {
   await withBusy($("#load-event-form"), async () => {
     await ensureAppAdminPin();
-    await refreshOpenEvents();
+    await refreshOpenEvents("", { autoLoadSelection: true });
     showToast("未完成活動已刷新。", "success");
   });
 }
@@ -854,15 +919,27 @@ async function handleRefreshEvents() {
 function openCreateEventDialog() {
   const dialog = $("#create-event-dialog");
   const form = $("#create-event-form");
+  form.reset();
+  fillCreateEventTitlePrefix(form);
   showModalDialog(dialog);
   refreshIcons();
-  window.setTimeout(() => form.elements.title.focus(), 0);
+  window.setTimeout(() => {
+    form.elements.title.focus();
+    form.elements.title.setSelectionRange(form.elements.title.value.length, form.elements.title.value.length);
+  }, 0);
 }
 
 function closeCreateEventDialog() {
   const dialog = $("#create-event-dialog");
   $("#create-event-form").reset();
   closeModalDialog(dialog);
+}
+
+function fillCreateEventTitlePrefix(form) {
+  const titleInput = form?.elements?.title;
+  if (!titleInput) return;
+
+  titleInput.value = `${formatEventTitleDate(new Date())} `;
 }
 
 function openBonusPrizeDialog(prizeId = "") {
@@ -1041,38 +1118,32 @@ function syncLoadedEventSelection() {
   writeLocalValue(STORAGE_KEYS.eventTitle, "");
 }
 
-async function reloadEvent() {
-  if (!state.event) {
-    showToast("請先載入活動。", "error");
-    return;
-  }
-  await withBusy($("#console-detail"), async () => {
-    await loadEvent(state.event.slug);
-    showToast("活動已刷新。", "success");
-  });
-}
-
 async function prepareHistoryPanel() {
   await withBusy($("#panel-history"), async () => {
     await ensureAppAdminPin();
-    await refreshHistoryEvents();
+    await refreshHistoryEvents("", { autoLoadSelection: true });
   });
 }
 
 async function handleRefreshHistoryEvents() {
   await withBusy($("#history-event-form"), async () => {
     await ensureAppAdminPin();
-    await refreshHistoryEvents();
+    await refreshHistoryEvents("", { autoLoadSelection: true });
     showToast("歷史活動已刷新。", "success");
   });
 }
 
 async function handleLoadHistoryEvent(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  await loadSelectedHistoryEventFromSelect(event.currentTarget);
+}
+
+async function loadSelectedHistoryEventFromSelect(form = $("#history-event-form")) {
   const data = new FormData(form);
+  const slug = String(data.get("slug") || "").trim();
+  if (!slug) return;
+
   await withBusy(form, async () => {
-    const slug = cleanRequired(data.get("slug"), "請選擇歷史活動。");
     await loadHistoryEvent(slug);
   });
 }
@@ -1117,6 +1188,7 @@ function renderHistoryEvent() {
   });
   renderAdminHistoryStats(event);
   syncHistoryRosterButtons();
+  syncHistoryActionButtons(event);
 
   renderPrizeRows("#history-prize-table", event.prizes, "這場活動沒有獎項紀錄。");
   renderAwardRows("#history-award-table", event.awards, "這場活動沒有中獎紀錄。", {
@@ -1150,9 +1222,15 @@ function clearHistoryDetail() {
   const empty = $("#history-empty");
   if (!detail || !empty) return;
 
+  const select = $("#history-event-select");
+  if (select) {
+    select.value = "";
+    syncEnhancedSelect(select);
+  }
   detail.hidden = true;
   empty.hidden = false;
   setText("#history-status", "未載入");
+  syncHistoryActionButtons(null);
   renderAdminEventHeader({
     targetSelector: "#admin-history-event-header",
     label: "活動",
@@ -1188,9 +1266,7 @@ function renderEvent() {
   });
   renderAdminConsoleStats(event);
   syncRosterButtons();
-
-  $("#close-event").disabled = event.status === "closed";
-  $("#reopen-event").disabled = event.status === "live";
+  syncConsoleActionButtons(event);
   $("#draw-prize").disabled = event.status !== "live";
   $("#open-bonus-prize-dialog").disabled = event.status !== "live";
 
@@ -1199,6 +1275,36 @@ function renderEvent() {
   renderPrizeTable();
   renderAwards();
   renderDrawLog();
+  refreshIcons();
+}
+
+function syncConsoleActionButtons(event = state.event) {
+  const hasEvent = Boolean(event);
+  const isLive = event?.status === "live";
+  const targetStatus = isLive ? "closed" : "live";
+  const statusButton = $("#toggle-event-status");
+  const statusIcon = statusButton?.querySelector("[data-lucide]");
+  const statusLabel = !hasEvent ? "活動狀態" : isLive ? "結束活動" : "重新開放";
+
+  statusButton.disabled = !hasEvent;
+  statusButton.dataset.targetStatus = targetStatus;
+  if (statusIcon) {
+    statusIcon.dataset.lucide = !hasEvent || isLive ? "lock" : "unlock";
+  }
+  setText("#toggle-event-status span", statusLabel);
+  $("#delete-event").disabled = !hasEvent;
+  refreshIcons();
+}
+
+function handleToggleEventStatus(event) {
+  const targetStatus = event.currentTarget.dataset.targetStatus || (state.event?.status === "live" ? "closed" : "live");
+  void setEventStatus(targetStatus);
+}
+
+function syncHistoryActionButtons(event = state.historyEvent) {
+  const hasEvent = Boolean(event);
+  $("#reopen-history-event").disabled = !hasEvent;
+  $("#delete-history-event").disabled = !hasEvent;
   refreshIcons();
 }
 
@@ -2407,8 +2513,10 @@ function actionMap(action) {
 
 async function setEventStatus(status) {
   let label = "";
+  let targetSlug = "";
   try {
     ensureEventLoaded();
+    targetSlug = state.event.slug;
     label = status === "closed" ? "結束活動" : "重新開放活動";
   } catch (error) {
     showToast(friendlyError(error.message), "error");
@@ -2426,18 +2534,65 @@ async function setEventStatus(status) {
     if (!confirmed) return;
   }
 
-  await withBusy($("#console-detail"), async () => {
+  await withBusy($("#console-action-bar"), async () => {
     await ensureAppAdminPin();
     await rpc("set_raffle_event_status", {
-      p_slug: state.event.slug,
+      p_slug: targetSlug,
       p_admin_pin: state.appAdminPin,
       p_status: status
     });
-    await loadEvent(state.event.slug);
-    await refreshOpenEvents(status === "live" ? state.event.slug : "");
-    await refreshHistoryEvents(status === "closed" ? state.event.slug : "");
+
+    if (status === "closed") {
+      clearLoadedEvent();
+      await refreshOpenEvents("", { autoLoadSelection: true });
+      await refreshHistoryEvents(targetSlug);
+      await loadHistoryEvent(targetSlug);
+    } else {
+      await refreshOpenEvents(targetSlug);
+      await refreshHistoryEvents();
+      await loadEvent(targetSlug);
+    }
+
     showToast(`${label}完成。`, "success");
   });
+  syncConsoleActionButtons();
+  syncHistoryActionButtons();
+}
+
+async function reopenHistoryEvent() {
+  const targetEvent = state.historyEvent;
+  if (!targetEvent) {
+    showToast("請先載入歷史活動。", "error");
+    return;
+  }
+
+  const confirmed = await requestConfirmDialog({
+    title: "重新開放活動",
+    message: `確定重新開放「${targetEvent.title}」？重新開放後會回到抽獎控制台繼續使用。`,
+    confirmLabel: "重新開放",
+    confirmIcon: "unlock",
+    confirmKind: "primary"
+  });
+  if (!confirmed) return;
+
+  await withBusy($("#history-action-bar"), async () => {
+    await ensureAppAdminPin();
+    await rpc("set_raffle_event_status", {
+      p_slug: targetEvent.slug,
+      p_admin_pin: state.appAdminPin,
+      p_status: "live"
+    });
+
+    state.historyEvent = null;
+    clearHistoryDetail();
+    await refreshHistoryEvents();
+    await refreshOpenEvents(targetEvent.slug);
+    await loadEvent(targetEvent.slug);
+    switchTab("console");
+    showToast("活動已重新開放。", "success");
+  });
+  syncHistoryActionButtons();
+  syncConsoleActionButtons();
 }
 
 async function deleteLoadedEvent(source) {
@@ -2447,22 +2602,24 @@ async function deleteLoadedEvent(source) {
     return;
   }
 
-  const confirmed = await requestConfirmDialog({
-    title: "刪除活動",
-    message: `確定刪除「${targetEvent.title}」？獎項、中獎名單與抽獎紀錄都會一併刪除。`,
-    confirmLabel: "刪除活動",
-    confirmIcon: "trash-2",
-    confirmKind: "danger"
-  });
-  if (!confirmed) return;
+  const busyTarget = source === "history" ? $("#history-action-bar") : $("#console-action-bar");
+  const mutationKey = `delete:${source}:${targetEvent.slug || targetEvent.title || ""}`;
+  if (state.eventMutationKey === mutationKey) return;
 
-  const busyTarget = source === "history" ? $("#history-detail") : $("#console-detail");
-  await withBusy(busyTarget, async () => {
-    await ensureAppAdminPin();
-    await rpc("delete_raffle_event", {
-      p_slug: targetEvent.slug,
-      p_admin_pin: state.appAdminPin
+  state.eventMutationKey = mutationKey;
+  setBusy(busyTarget, true);
+  try {
+    const confirmed = await requestConfirmDialog({
+      title: "刪除活動",
+      message: `確定刪除「${targetEvent.title}」？獎項、中獎名單與抽獎紀錄都會一併刪除。`,
+      confirmLabel: "刪除活動",
+      confirmIcon: "trash-2",
+      confirmKind: "danger"
     });
+    if (!confirmed) return;
+
+    await ensureAppAdminPin();
+    await deleteRaffleEventByKnownIdentifiers(targetEvent, source);
 
     if (state.historyEvent?.slug === targetEvent.slug) {
       state.historyEvent = null;
@@ -2473,10 +2630,98 @@ async function deleteLoadedEvent(source) {
       clearLoadedEvent();
     }
 
-    await refreshOpenEvents();
-    await refreshHistoryEvents();
+    await refreshOpenEvents("", { autoLoadSelection: source !== "history" });
+    await refreshHistoryEvents("", { autoLoadSelection: source === "history" });
     showToast("活動已刪除。", "success");
-  });
+  } catch (error) {
+    rememberInvalidPins(error);
+    showToast(friendlyError(error.message || "刪除活動失敗。"), "error");
+  } finally {
+    state.eventMutationKey = "";
+    setBusy(busyTarget, false);
+    if (source !== "history") {
+      syncConsoleActionButtons();
+    } else {
+      syncHistoryActionButtons();
+    }
+  }
+}
+
+async function deleteRaffleEventByKnownIdentifiers(event, source) {
+  const candidates = getEventIdentifierCandidates(event, source);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      await rpc("delete_raffle_event", {
+        p_slug: candidate,
+        p_admin_pin: state.appAdminPin
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isMissingEventError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error("找不到活動。");
+}
+
+function getEventIdentifierCandidates(event, source) {
+  const selectValue = source === "history"
+    ? $("#history-event-select")?.value
+    : $("#event-title-select")?.value;
+  const titleSlug = slugifyEventTitle(event.title);
+  return uniqueCleanValues([
+    event.slug,
+    selectValue,
+    source === "history" ? state.historyEvent?.slug : state.eventSlugHint,
+    readLocalValue(STORAGE_KEYS.eventSlug),
+    titleSlug,
+    event.title
+  ]);
+}
+
+function slugifyEventTitle(title) {
+  let slug = String(title || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+
+  if (!slug) {
+    slug = "raffle";
+  }
+  slug = slug.slice(0, 72).replace(/^-|-$/g, "");
+  if (slug.length > 0 && slug.length < 3) {
+    slug = `raffle-${slug}`;
+  }
+  return slug;
+}
+
+function uniqueCleanValues(values) {
+  const seen = new Set();
+  return values.reduce((items, value) => {
+    const clean = String(value || "").trim();
+    if (!clean || seen.has(clean)) {
+      return items;
+    }
+
+    seen.add(clean);
+    items.push(clean);
+    return items;
+  }, []);
+}
+
+function isMissingEventError(error) {
+  return String(error?.message || "").includes("找不到活動");
 }
 
 function clearLoadedEvent() {
@@ -2484,6 +2729,7 @@ function clearLoadedEvent() {
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
   setText("#console-status", "未載入");
+  syncConsoleActionButtons();
   $("#event-title-select").value = "";
   syncEnhancedSelect($("#event-title-select"));
   state.eventSlugHint = "";
@@ -3846,6 +4092,12 @@ function memberPlainText(memberNo, displayName) {
   return `${label}${suffix}`;
 }
 
+function formatEventTitleDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+}
 
 function formatDate(value) {
   if (!value) return "";

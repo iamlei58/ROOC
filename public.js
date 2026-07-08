@@ -52,6 +52,7 @@ function setText(selector, text) {
 
 function bindPublicPage() {
   $("#public-event-form").addEventListener("submit", handleLoadPublicEvent);
+  $("#public-event-select").addEventListener("change", handlePublicEventAutoLoad);
   $("#refresh-public-events").addEventListener("click", handleRefreshPublicEvents);
   $("#public-detail").addEventListener("click", handlePublicRosterButtonClick);
   $("#public-draw-table").addEventListener("click", handleDrawVerifyClick);
@@ -208,11 +209,19 @@ async function handleRefreshPublicEvents() {
 
 async function handleLoadPublicEvent(event) {
   event.preventDefault();
-  const form = event.currentTarget;
-  const slug = cleanRequired(new FormData(form).get("slug"), "請選擇活動。");
+  await loadSelectedPublicEvent(new FormData(event.currentTarget).get("slug"));
+}
 
-  await withBusy(form, async () => {
-    await loadPublicEvent(slug, { resetSeen: true });
+async function handlePublicEventAutoLoad(event) {
+  await loadSelectedPublicEvent(event.currentTarget.value);
+}
+
+async function loadSelectedPublicEvent(slug) {
+  const cleanSlug = String(slug || "").trim();
+  if (!cleanSlug) return;
+
+  await withBusy($("#public-event-form"), async () => {
+    await loadPublicEvent(cleanSlug, { resetSeen: true });
   });
 }
 
