@@ -60,6 +60,16 @@ let memberLoadSeq = 0;
 let guideSearchTimer = null;
 let guideLoadSeq = 0;
 let guideScrollSyncLock = false;
+const guideImageViewState = {
+  zoom: 100,
+  x: 0,
+  y: 0,
+  dragging: false,
+  startX: 0,
+  startY: 0,
+  originX: 0,
+  originY: 0
+};
 const drawAnimationState = {
   intervalId: null,
   labels: [],
@@ -292,6 +302,13 @@ function bindForms() {
   $("#guide-markdown-toolbar").addEventListener("click", handleGuideMarkdownToolbarClick);
   $("#guide-image-upload").addEventListener("change", handleGuideMarkdownImageUpload);
   $("#delete-guide-post").addEventListener("click", handleGuideDelete);
+  $("#guide-preview").addEventListener("click", handleGuideImageClick);
+  $("#close-guide-image").addEventListener("click", closeGuideImageDialog);
+  $("#guide-image-zoom-out").addEventListener("click", () => stepGuideImageZoom(-20));
+  $("#guide-image-zoom-in").addEventListener("click", () => stepGuideImageZoom(20));
+  $("#guide-image-zoom-reset").addEventListener("click", () => setGuideImageZoom(100));
+  $("#guide-image-zoom-range").addEventListener("input", (event) => setGuideImageZoom(event.target.value));
+  bindGuideImagePan();
   if (!renderMemberSortHead()) {
     $all("[data-member-sort]").forEach((button) => {
       button.addEventListener("click", () => sortMembersBy(button.dataset.memberSort));
@@ -311,6 +328,7 @@ function bindDialogBackdrops() {
     ["#admin-pin-dialog", cancelAdminPinPrompt],
     ["#roster-dialog", closeRosterDialog],
     ["#audit-dialog", closeAuditDialog],
+    ["#guide-image-dialog", closeGuideImageDialog],
     ["#confirm-dialog", () => closeConfirmDialog(false)]
   ]);
 
@@ -4291,6 +4309,141 @@ function renderGuideContent(content) {
   return renderGuideMarkdown(guideContentToMarkdown(content)) || '<p class="guide-muted">這篇攻略目前沒有內容。</p>';
 }
 
+function renderGuideImageFigure(src, alt = "攻略圖片", caption = "") {
+  const imageAlt = alt || caption || "攻略圖片";
+  const dialogCaption = caption || imageAlt;
+  return `
+    <figure class="guide-figure">
+      <button
+        class="guide-image-button"
+        type="button"
+        data-guide-image-src="${escapeHtml(src)}"
+        data-guide-image-caption="${escapeHtml(dialogCaption)}"
+        aria-label="放大查看圖片：${escapeHtml(imageAlt)}"
+      >
+        <img src="${escapeHtml(src)}" alt="${escapeHtml(imageAlt)}">
+        <span class="guide-image-zoom">點擊放大</span>
+      </button>
+      ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
+    </figure>
+  `;
+}
+
+function handleGuideImageClick(event) {
+  const button = event.target.closest("[data-guide-image-src]");
+  if (!button) return;
+  event.preventDefault();
+  openGuideImageDialog(button.dataset.guideImageSrc, button.dataset.guideImageCaption);
+}
+
+function openGuideImageDialog(src, caption = "") {
+  const dialog = $("#guide-image-dialog");
+  const image = $("#guide-image-dialog-img");
+  const captionEl = $("#guide-image-dialog-caption");
+  const safeSrc = safeGuideImageUrl(src);
+  if (!dialog || !image || !safeSrc) return;
+
+  const cleanCaption = String(caption || "").trim();
+  image.src = safeSrc;
+  image.alt = cleanCaption || "攻略圖片";
+  if (captionEl) {
+    captionEl.textContent = cleanCaption;
+    captionEl.hidden = !cleanCaption;
+  }
+  setGuideImageZoom(100);
+  showModalDialog(dialog);
+  refreshIcons();
+}
+
+function closeGuideImageDialog() {
+  const dialog = $("#guide-image-dialog");
+  const image = $("#guide-image-dialog-img");
+  closeModalDialog(dialog);
+  if (image) {
+    image.removeAttribute("src");
+    image.removeAttribute("style");
+  }
+}
+
+function bindGuideImagePan() {
+  const viewport = $("#guide-image-viewport");
+  if (!viewport) return;
+
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (guideImageViewState.zoom <= 100) return;
+    event.preventDefault();
+    guideImageViewState.dragging = true;
+    guideImageViewState.startX = event.clientX;
+    guideImageViewState.startY = event.clientY;
+    guideImageViewState.originX = guideImageViewState.x;
+    guideImageViewState.originY = guideImageViewState.y;
+    viewport.classList.add("is-dragging");
+    try {
+      viewport.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Some browsers can reject capture when the pointer has already ended.
+    }
+  });
+
+  viewport.addEventListener("pointermove", (event) => {
+    if (!guideImageViewState.dragging) return;
+    event.preventDefault();
+    guideImageViewState.x = guideImageViewState.originX + event.clientX - guideImageViewState.startX;
+    guideImageViewState.y = guideImageViewState.originY + event.clientY - guideImageViewState.startY;
+    applyGuideImageTransform();
+  });
+
+  const stopDragging = (event) => {
+    guideImageViewState.dragging = false;
+    viewport.classList.remove("is-dragging");
+    try {
+      viewport.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // Ignore stale pointer captures.
+    }
+  };
+  viewport.addEventListener("pointerup", stopDragging);
+  viewport.addEventListener("pointercancel", stopDragging);
+}
+
+function stepGuideImageZoom(delta) {
+  const range = $("#guide-image-zoom-range");
+  const current = Number(range?.value || 100);
+  setGuideImageZoom(current + delta);
+}
+
+function setGuideImageZoom(value) {
+  const range = $("#guide-image-zoom-range");
+  const output = $("#guide-image-zoom-value");
+  const zoom = Math.max(50, Math.min(300, Number(value) || 100));
+  guideImageViewState.zoom = zoom;
+  if (zoom <= 100) {
+    guideImageViewState.x = 0;
+    guideImageViewState.y = 0;
+  }
+  if (range) range.value = String(zoom);
+  if (output) {
+    output.value = `${zoom}%`;
+    output.textContent = `${zoom}%`;
+  }
+  applyGuideImageTransform();
+}
+
+function applyGuideImageTransform() {
+  const image = $("#guide-image-dialog-img");
+  const viewport = $("#guide-image-viewport");
+  if (!image) return;
+  const scale = guideImageViewState.zoom / 100;
+  image.style.transform = `translate(${guideImageViewState.x}px, ${guideImageViewState.y}px) scale(${scale})`;
+  if (image) {
+    image.style.cursor = guideImageViewState.zoom > 100 ? "grab" : "default";
+  }
+  if (viewport) {
+    viewport.classList.toggle("is-zoomed", guideImageViewState.zoom > 100);
+  }
+}
+
 function renderGuideMarkdown(markdown) {
   const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
   const html = [];
@@ -4300,7 +4453,7 @@ function renderGuideMarkdown(markdown) {
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
-    html.push(`<p>${renderGuideInline(paragraph.join(" "))}</p>`);
+    html.push(`<p>${paragraph.map(renderGuideInline).join("<br>")}</p>`);
     paragraph = [];
   };
   const flushList = () => {
@@ -4365,11 +4518,7 @@ function renderGuideMarkdown(markdown) {
       flushList();
       const safeUrl = safeGuideImageUrl(image[2]);
       if (safeUrl) {
-        html.push(`
-          <figure class="guide-figure">
-            <img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(image[1] || "攻略圖片")}">
-          </figure>
-        `);
+        html.push(renderGuideImageFigure(safeUrl, image[1] || "攻略圖片"));
       }
       return;
     }

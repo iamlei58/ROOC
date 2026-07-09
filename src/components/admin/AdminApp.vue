@@ -562,6 +562,31 @@ onMounted(() => {
       <div class="modal-shell"></div>
     </dialog>
 
+    <dialog class="modal guide-image-modal" id="guide-image-dialog">
+      <div class="guide-image-shell">
+        <button class="btn icon-button guide-image-close" type="button" id="close-guide-image" aria-label="關閉圖片">
+          <i data-lucide="x"></i>
+        </button>
+        <div class="guide-image-viewport" id="guide-image-viewport">
+          <img id="guide-image-dialog-img" alt="" draggable="false">
+        </div>
+        <div class="guide-image-controls" aria-label="圖片縮放">
+          <button class="btn table-action" type="button" id="guide-image-zoom-out" aria-label="縮小圖片">
+            <i data-lucide="zoom-out"></i>
+          </button>
+          <input id="guide-image-zoom-range" type="range" min="50" max="300" step="10" value="100" aria-label="圖片縮放倍率">
+          <output id="guide-image-zoom-value" for="guide-image-zoom-range">100%</output>
+          <button class="btn table-action" type="button" id="guide-image-zoom-in" aria-label="放大圖片">
+            <i data-lucide="zoom-in"></i>
+          </button>
+          <button class="btn table-action" type="button" id="guide-image-zoom-reset" aria-label="重設圖片大小">
+            <i data-lucide="rotate-ccw"></i>
+          </button>
+        </div>
+        <p id="guide-image-dialog-caption"></p>
+      </div>
+    </dialog>
+
     <dialog class="modal compact-modal confirm-modal" id="confirm-dialog">
       <div class="modal-shell">
         <div id="confirm-dialog-content"></div>
