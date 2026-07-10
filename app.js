@@ -1988,15 +1988,14 @@ async function loadFullAuditDraw(draw, targetEvent) {
   const slug = targetEvent?.slug || "";
   if (!slug || !draw?.id) return fallbackDraw;
 
-  let publicEvent = await fetchPublicAuditEvent(slug);
-  let publicDraw = publicEvent.draws.find((item) => item.id === draw.id);
+  const audit = await rpc("get_public_raffle_draw_audit", {
+    p_slug: slug,
+    p_draw_id: draw.id
+  });
+  if (!audit) return fallbackDraw;
 
-  if (!publicDraw) {
-    publicEvent = await fetchPublicAuditEvent(slug, { force: true });
-    publicDraw = publicEvent.draws.find((item) => item.id === draw.id);
-  }
-
-  return publicDraw || fallbackDraw;
+  fallbackDraw.audit = normalizeAuditSnapshot(audit, fallbackDraw);
+  return fallbackDraw;
 }
 
 async function fetchPublicAuditEvent(slug, options = {}) {

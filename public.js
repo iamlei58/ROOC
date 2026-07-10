@@ -3,6 +3,7 @@ const publicState = {
   environmentState: null,
   events: [],
   event: null,
+  eventRevision: "",
   pendingDrawId: "",
   refreshTimer: null,
   isRefreshing: false,
@@ -686,11 +687,11 @@ async function loadPublicEvent(slug, options = {}) {
   const resetSeen = Boolean(options.resetSeen || previousSlug !== cleanSlug);
   const previousKnownDrawIds = resetSeen ? new Set() : new Set(publicState.knownDrawIds);
 
-  const [rows, liveDraw] = await Promise.all([
+  const [rows, snapshot] = await Promise.all([
     rpc("get_public_raffle_event", {
       p_slug: cleanSlug
     }),
-    rpc("get_public_raffle_live_draw", {
+    rpc("get_public_raffle_event_snapshot", {
       p_slug: cleanSlug
     })
   ]);
@@ -701,8 +702,9 @@ async function loadPublicEvent(slug, options = {}) {
 
   publicState.event = normalizePublicEvent({
     ...rows[0],
-    live_draw: liveDraw || null
+    live_draw: snapshot?.live_draw || null
   });
+  publicState.eventRevision = String(snapshot?.revision || "");
   if (resetSeen) {
     publicState.lastLiveResultKey = "";
     publicState.tableRenderKeys.clear();
@@ -851,7 +853,18 @@ async function refreshPublicSnapshot() {
 
   publicState.isRefreshing = true;
   try {
-    await loadPublicEvent(publicState.event.slug, { preserveSelect: true });
+    const snapshot = await rpc("get_public_raffle_event_snapshot", {
+      p_slug: publicState.event.slug
+    });
+    const revision = String(snapshot?.revision || "");
+
+    if (!revision || revision !== publicState.eventRevision) {
+      await loadPublicEvent(publicState.event.slug, { preserveSelect: true });
+      return;
+    }
+
+    publicState.event.live_draw = snapshot?.live_draw || null;
+    handlePublicLiveState(publicState.event);
   } catch {
     // Auto refresh stays quiet so viewers are not interrupted by transient network hiccups.
   } finally {
@@ -1433,9 +1446,23 @@ function openAuditDialog(draw) {
   dialog.showModal();
   refreshIcons();
 
-  void verifyDrawAudit(draw)
-    .then((result) => renderAuditContent(draw, result))
+  void loadFullPublicAudit(draw)
+    .then((fullDraw) => verifyDrawAudit(fullDraw).then((result) => ({ fullDraw, result })))
+    .then(({ fullDraw, result }) => renderAuditContent(fullDraw, result))
     .catch((error) => renderAuditContent(draw, { status: "failed", message: error.message }));
+}
+
+async function loadFullPublicAudit(draw) {
+  if (canVerifyDrawAudit(draw, draw?.audit)) return draw;
+
+  const audit = await rpc("get_public_raffle_draw_audit", {
+    p_slug: publicState.event?.slug || "",
+    p_draw_id: draw?.id
+  });
+  if (!audit) throw new Error("這筆紀錄沒有公平快照。");
+
+  draw.audit = normalizePublicAudit(audit, draw);
+  return draw;
 }
 
 function closeAuditDialog() {

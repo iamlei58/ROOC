@@ -2392,26 +2392,9 @@ begin
                 'round_probability', draw_rows.round_probability,
                 'prize_remaining_before', draw_rows.prize_remaining_before,
                 'random_seed', draw_rows.random_seed,
-                'eligible_manifest', draw_rows.eligible_manifest,
                 'eligible_manifest_hash', draw_rows.eligible_manifest_hash,
                 'selector_hash', draw_rows.selector_hash,
-                'selected_index', draw_rows.selected_index,
-                'eligible_members', coalesce(
-                  (
-                    select jsonb_agg(
-                      jsonb_build_object(
-                        'position', eligible.ordinality,
-                        'member_no', eligible.item ->> 'member_no',
-                        'role_name', eligible.item ->> 'role_name',
-                        'occupation', eligible.item ->> 'occupation',
-                        'joined_dc', (eligible.item ->> 'joined_dc')::boolean
-                      )
-                      order by eligible.ordinality
-                    )
-                    from jsonb_array_elements(draw_rows.eligible_members) with ordinality as eligible(item, ordinality)
-                  ),
-                  '[]'::jsonb
-                )
+                'selected_index', draw_rows.selected_index
               )
             end
           )
@@ -2444,8 +2427,6 @@ begin
             a.round_probability,
             a.prize_remaining_before,
             a.random_seed,
-            a.eligible_members,
-            a.eligible_manifest,
             a.eligible_manifest_hash,
             a.selector_hash,
             a.selected_index
@@ -2460,6 +2441,75 @@ begin
       ),
       '[]'::jsonb
     ) as draws;
+end;
+$$;
+
+create or replace function public.get_public_raffle_draw_audit(
+  p_slug text,
+  p_draw_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_slug text := nullif(trim(p_slug), '');
+  v_event_id uuid;
+begin
+  if v_slug is null or p_draw_id is null then
+    raise exception '缺少活動或抽獎紀錄。';
+  end if;
+
+  select e.id
+  into v_event_id
+  from public.raffle_events e
+  where e.slug = v_slug;
+
+  if not found then
+    raise exception '找不到活動。';
+  end if;
+
+  return (
+    select jsonb_build_object(
+      'id', a.id,
+      'algorithm', a.algorithm,
+      'round_id', a.round_id,
+      'round_draw_count', a.round_draw_count,
+      'round_index', a.round_index,
+      'active_member_count', a.active_member_count,
+      'excluded_count_before', a.excluded_count_before,
+      'provider_excluded', a.provider_excluded,
+      'eligible_count', a.eligible_count,
+      'step_probability', a.step_probability,
+      'round_probability', a.round_probability,
+      'prize_remaining_before', a.prize_remaining_before,
+      'random_seed', a.random_seed,
+      'eligible_manifest', a.eligible_manifest,
+      'eligible_manifest_hash', a.eligible_manifest_hash,
+      'selector_hash', a.selector_hash,
+      'selected_index', a.selected_index,
+      'eligible_members', coalesce(
+        (
+          select jsonb_agg(
+            jsonb_build_object(
+              'position', eligible.ordinality,
+              'member_no', eligible.item ->> 'member_no',
+              'role_name', eligible.item ->> 'role_name',
+              'occupation', eligible.item ->> 'occupation',
+              'joined_dc', (eligible.item ->> 'joined_dc')::boolean
+            )
+            order by eligible.ordinality
+          )
+          from jsonb_array_elements(a.eligible_members) with ordinality as eligible(item, ordinality)
+        ),
+        '[]'::jsonb
+      )
+    )
+    from public.raffle_draw_audits a
+    where a.event_id = v_event_id
+      and a.draw_id = p_draw_id
+  );
 end;
 $$;
 
@@ -2510,6 +2560,89 @@ begin
         or (l.status in ('completed', 'failed') and l.updated_at > now() - interval '45 seconds')
       )
     limit 1
+  );
+end;
+$$;
+
+-- Keep the public live page inexpensive: clients poll this compact snapshot and
+-- only download the full audit history when the event revision changes.
+create or replace function public.get_public_raffle_event_snapshot(
+  p_slug text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_slug text := nullif(trim(p_slug), '');
+  v_event public.raffle_events%rowtype;
+  v_revision text;
+  v_live_draw jsonb;
+begin
+  if v_slug is null then
+    raise exception '請選擇活動。';
+  end if;
+
+  select *
+  into v_event
+  from public.raffle_events e
+  where e.slug = v_slug;
+
+  if not found then
+    raise exception '找不到活動。';
+  end if;
+
+  select md5(concat_ws(
+    '|',
+    v_event.status,
+    coalesce(v_event.closed_at::text, ''),
+    coalesce((
+      select jsonb_agg(
+        jsonb_build_array(p.id, p.name, p.provider, p.quantity, p.sort_order, p.is_active)
+        order by p.id
+      )::text
+      from public.raffle_prizes p
+      where p.event_id = v_event.id
+    ), '[]'),
+    coalesce((
+      select jsonb_agg(
+        jsonb_build_array(d.id, d.status, d.final_member_id, d.transfer_member_id, d.resolved_at)
+        order by d.id
+      )::text
+      from public.raffle_draws d
+      where d.event_id = v_event.id
+    ), '[]')
+  ))
+  into v_revision;
+
+  select jsonb_build_object(
+    'id', l.id,
+    'event_id', l.event_id,
+    'prize_id', l.prize_id,
+    'prize_name', l.prize_name,
+    'provider', l.provider,
+    'draw_count', l.draw_count,
+    'status', l.status,
+    'result_draw_ids', l.result_draw_ids,
+    'error_message', l.error_message,
+    'started_at', l.started_at,
+    'updated_at', l.updated_at,
+    'completed_at', l.completed_at
+  )
+  into v_live_draw
+  from public.raffle_live_draws l
+  where l.event_id = v_event.id
+    and (
+      (l.status = 'drawing' and l.updated_at > now() - interval '5 minutes')
+      or (l.status in ('completed', 'failed') and l.updated_at > now() - interval '45 seconds')
+    )
+  limit 1;
+
+  return jsonb_build_object(
+    'revision', v_revision,
+    'status', v_event.status,
+    'live_draw', v_live_draw
   );
 end;
 $$;
@@ -3222,7 +3355,9 @@ revoke execute on function public.get_raffle_event_admin_by_title(text, text) fr
 revoke execute on function public.get_raffle_event_rosters(text, text) from public;
 revoke execute on function public.list_public_raffle_events() from public;
 revoke execute on function public.get_public_raffle_event(text) from public;
+revoke execute on function public.get_public_raffle_draw_audit(text, uuid) from public;
 revoke execute on function public.get_public_raffle_live_draw(text) from public;
+revoke execute on function public.get_public_raffle_event_snapshot(text) from public;
 revoke execute on function public.start_raffle_live_draw(text, text, uuid, integer) from public;
 revoke execute on function public.finish_raffle_live_draw(text, text, uuid, text, uuid[], text) from public;
 revoke execute on function public.get_raffle_transfer_candidates(text, text) from public;
@@ -3263,7 +3398,9 @@ grant execute on function public.get_raffle_event_admin_by_title(text, text) to 
 grant execute on function public.get_raffle_event_rosters(text, text) to anon, authenticated;
 grant execute on function public.list_public_raffle_events() to anon, authenticated;
 grant execute on function public.get_public_raffle_event(text) to anon, authenticated;
+grant execute on function public.get_public_raffle_draw_audit(text, uuid) to anon, authenticated;
 grant execute on function public.get_public_raffle_live_draw(text) to anon, authenticated;
+grant execute on function public.get_public_raffle_event_snapshot(text) to anon, authenticated;
 grant execute on function public.start_raffle_live_draw(text, text, uuid, integer) to anon, authenticated;
 grant execute on function public.finish_raffle_live_draw(text, text, uuid, text, uuid[], text) to anon, authenticated;
 grant execute on function public.get_raffle_transfer_candidates(text, text) to anon, authenticated;
