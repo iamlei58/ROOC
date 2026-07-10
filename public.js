@@ -1696,7 +1696,7 @@ function renderGuideImageFigure(src, alt = "攻略圖片", caption = "") {
         data-guide-image-caption="${escapeHtml(dialogCaption)}"
         aria-label="放大查看圖片：${escapeHtml(imageAlt)}"
       >
-        <img src="${escapeHtml(src)}" alt="${escapeHtml(imageAlt)}">
+        <img src="${escapeHtml(src)}" alt="${escapeHtml(imageAlt)}" loading="lazy" decoding="async" fetchpriority="low">
         <span class="guide-image-zoom">點擊放大</span>
       </button>
       ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}

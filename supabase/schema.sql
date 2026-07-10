@@ -2390,10 +2390,6 @@ begin
                 'eligible_count', draw_rows.eligible_count,
                 'step_probability', draw_rows.step_probability,
                 'round_probability', draw_rows.round_probability,
-                'prize_remaining_before', draw_rows.prize_remaining_before,
-                'random_seed', draw_rows.random_seed,
-                'eligible_manifest_hash', draw_rows.eligible_manifest_hash,
-                'selector_hash', draw_rows.selector_hash,
                 'selected_index', draw_rows.selected_index
               )
             end
@@ -2425,10 +2421,6 @@ begin
             a.eligible_count,
             a.step_probability,
             a.round_probability,
-            a.prize_remaining_before,
-            a.random_seed,
-            a.eligible_manifest_hash,
-            a.selector_hash,
             a.selected_index
           from public.raffle_draws d
           join public.raffle_prizes p on p.id = d.prize_id

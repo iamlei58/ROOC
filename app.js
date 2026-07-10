@@ -14,6 +14,8 @@ const DRAW_EFFECT_CLEANUP_MS = 2600;
 const GUIDE_IMAGE_BUCKET = "rooc-guide-images";
 const GUIDE_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
 const GUIDE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const GUIDE_IMAGE_MAX_DIMENSION = 1920;
+const GUIDE_IMAGE_WEBP_QUALITY = 0.82;
 
 const state = {
   client: null,
@@ -4036,11 +4038,13 @@ async function uploadGuideImageFile(file) {
     throw new Error("圖片大小不能超過 5MB。");
   }
 
+  const uploadFile = await optimizeGuideImageFile(file);
+
   await ensureAppAdminPin();
   const rows = await rpc("create_guide_image_upload_path", {
     p_app_admin_pin: state.appAdminPin,
-    p_file_name: file.name,
-    p_content_type: file.type
+    p_file_name: uploadFile.name,
+    p_content_type: uploadFile.type
   });
   const uploadInfo = rows?.[0];
   const bucketName = uploadInfo?.bucket_name || GUIDE_IMAGE_BUCKET;
@@ -4051,9 +4055,9 @@ async function uploadGuideImageFile(file) {
   const { error: uploadError } = await requireClient()
     .storage
     .from(bucketName)
-    .upload(uploadInfo.object_path, file, {
+    .upload(uploadInfo.object_path, uploadFile, {
       cacheControl: "31536000",
-      contentType: file.type,
+      contentType: uploadFile.type,
       upsert: false
     });
   if (uploadError) throw new Error(uploadError.message);
@@ -4063,11 +4067,51 @@ async function uploadGuideImageFile(file) {
     .from(bucketName)
     .getPublicUrl(uploadInfo.object_path);
 
-  showToast("圖片已上傳並加入攻略。", "success");
+  const savedBytes = Math.max(file.size - uploadFile.size, 0);
+  const savedText = savedBytes > 0 ? `，節省 ${formatFileSize(savedBytes)}` : "";
+  showToast(`圖片已上傳並加入攻略${savedText}。`, "success");
   return {
     url: data?.publicUrl || "",
     alt: file.name.replace(/\.[^.]+$/, "")
   };
+}
+
+async function optimizeGuideImageFile(file) {
+  if (file.type === "image/gif" || !window.createImageBitmap) return file;
+
+  let bitmap;
+  try {
+    bitmap = await window.createImageBitmap(file);
+  } catch {
+    return file;
+  }
+  try {
+    const scale = Math.min(1, GUIDE_IMAGE_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", GUIDE_IMAGE_WEBP_QUALITY));
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "guide-image";
+    return new File([blob], `${baseName}.webp`, {
+      type: "image/webp",
+      lastModified: file.lastModified
+    });
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function cleanupRemovedGuideImages(previousContent, nextContent) {
@@ -4320,7 +4364,7 @@ function renderGuideImageFigure(src, alt = "攻略圖片", caption = "") {
         data-guide-image-caption="${escapeHtml(dialogCaption)}"
         aria-label="放大查看圖片：${escapeHtml(imageAlt)}"
       >
-        <img src="${escapeHtml(src)}" alt="${escapeHtml(imageAlt)}">
+        <img src="${escapeHtml(src)}" alt="${escapeHtml(imageAlt)}" loading="lazy" decoding="async">
         <span class="guide-image-zoom">點擊放大</span>
       </button>
       ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
