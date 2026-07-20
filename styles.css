@@ -1928,6 +1928,79 @@ input[readonly] {
   gap: 8px;
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.event-roster-preview {
+  display: grid;
+  gap: 10px;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.event-roster-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.event-roster-preview-head strong {
+  color: var(--text);
+}
+
+.event-roster-preview-head span {
+  color: #9a3a34;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.event-roster-preview-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 7px;
+  max-height: min(260px, 34vh);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.event-roster-preview-list:empty {
+  display: none;
+}
+
+.event-roster-preview-list li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.event-roster-preview-list li span {
+  color: var(--primary-dark);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.event-roster-preview-list li strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+}
+
 .selected-prize {
   display: grid;
   gap: 6px;
@@ -2883,6 +2956,10 @@ tr:last-child td {
 .prize-modal {
   width: min(560px, calc(100% - 28px));
   overflow: visible;
+}
+
+.roster-editor-modal {
+  width: min(760px, calc(100% - 28px));
 }
 
 .member-modal {

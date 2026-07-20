@@ -23,6 +23,25 @@
       <span>活動說明</span>
       <textarea name="description" rows="4" maxlength="1200"></textarea>
     </label>
+    <label>
+      <span>本場抽獎名單</span>
+      <textarea
+        name="roster_text"
+        id="create-event-roster-input"
+        rows="9"
+        maxlength="162000"
+        required
+        placeholder="貼上角色名稱，可使用換行、Tab、逗號或分號分隔"
+      ></textarea>
+      <small class="field-help">系統會清除空白項目並合併重複名稱；建立活動前請確認下方解析結果。</small>
+    </label>
+    <section class="event-roster-preview" id="create-event-roster-preview" aria-live="polite">
+      <div class="event-roster-preview-head">
+        <strong id="create-event-roster-count">尚未貼上名單</strong>
+        <span id="create-event-roster-warning"></span>
+      </div>
+      <ol class="event-roster-preview-list" id="create-event-roster-list"></ol>
+    </section>
     <div class="button-row">
       <button class="btn primary" type="submit">
         <i data-lucide="plus"></i>

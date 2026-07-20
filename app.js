@@ -37,6 +37,8 @@ const state = {
   publicAuditEvents: new Map(),
   auditDialogSeq: 0,
   providerMembers: [],
+  eventRosterMembers: [],
+  eventRosterEditable: false,
   transferCandidates: [],
   transferCandidatesLoading: false,
   pendingVisibleCount: PENDING_DRAW_PAGE_SIZE,
@@ -221,6 +223,12 @@ function bindForms() {
   $("#close-create-event-dialog").addEventListener("click", closeCreateEventDialog);
   $("#cancel-create-event-dialog").addEventListener("click", closeCreateEventDialog);
   $("#create-event-form").addEventListener("submit", handleCreateEvent);
+  $("#create-event-roster-input").addEventListener("input", () => renderEventRosterPreview("create"));
+  $("#open-event-roster-dialog").addEventListener("click", openEventRosterDialog);
+  $("#close-event-roster-dialog").addEventListener("click", closeEventRosterDialog);
+  $("#cancel-event-roster-dialog").addEventListener("click", closeEventRosterDialog);
+  $("#event-roster-form").addEventListener("submit", handleEventRosterSave);
+  $("#event-roster-input").addEventListener("input", () => renderEventRosterPreview("edit"));
   $("#open-bonus-prize-dialog").addEventListener("click", () => openBonusPrizeDialog());
   $("#close-bonus-prize-dialog").addEventListener("click", closeBonusPrizeDialog);
   $("#cancel-bonus-prize-dialog").addEventListener("click", closeBonusPrizeDialog);
@@ -322,6 +330,7 @@ function bindForms() {
 function bindDialogBackdrops() {
   const dialogClosers = new Map([
     ["#create-event-dialog", closeCreateEventDialog],
+    ["#event-roster-dialog", closeEventRosterDialog],
     ["#bonus-prize-dialog", closeBonusPrizeDialog],
     ["#member-create-dialog", closeMemberCreateDialog],
     ["#member-import-dialog", closeMemberImportDialog],
@@ -545,6 +554,8 @@ function forgetAppAdminPin() {
   state.historyEvents = [];
   state.historyEvent = null;
   state.providerMembers = [];
+  state.eventRosterMembers = [];
+  state.eventRosterEditable = false;
   state.transferCandidates = [];
   state.transferCandidatesLoading = false;
   state.memberImportRawRows = [];
@@ -580,7 +591,7 @@ function initializeSearchableSelects() {
   });
   enhanceSelect($("#prize-provider-select"), {
     placeholder: "搜尋提供者",
-    noResults: "找不到公會中成員"
+    noResults: "找不到本場名單成員"
   });
 }
 
@@ -780,12 +791,21 @@ async function refreshPrizeProviderMembers() {
     return;
   }
 
-  const rows = await rpc("get_rooc_members", {
-    p_app_admin_pin: state.appAdminPin,
-    p_query: null,
-    p_include_inactive: false
-  });
+  const rows = state.event?.slug
+    ? await rpc("get_raffle_event_members", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin
+    })
+    : await rpc("get_rooc_members", {
+      p_app_admin_pin: state.appAdminPin,
+      p_query: null,
+      p_include_inactive: false
+    });
   state.providerMembers = rows || [];
+  if (state.event?.slug) {
+    state.eventRosterMembers = rows || [];
+    state.eventRosterEditable = Boolean(rows?.[0]?.editable ?? false);
+  }
   populatePrizeProviderSelect();
 }
 
@@ -833,7 +853,7 @@ function populatePrizeProviderSelect(preferredMemberNo = "") {
     onRendered: () => {
       enhanceSelect(select, {
         placeholder: "搜尋提供者",
-        noResults: "找不到公會中成員"
+        noResults: "找不到本場名單成員"
       });
       syncEnhancedSelect(select);
     }
@@ -878,7 +898,7 @@ function bindTransferSelectChange(select) {
 }
 
 function memberOptionLabel(member) {
-  return `${member.role_name || member.member_no}（${member.member_no}）`;
+  return member.role_name || member.member_no || "";
 }
 
 function updateDrawCountLimit() {
@@ -969,7 +989,7 @@ function renderDrawOdds() {
   const excludedCount = Number(state.event.excluded_count || 0);
   const activeCount = Number(state.event.total_active_members || 0);
   const probabilityText = `${drawCount}/${eligibleRemaining} = ${formatPercent(probability)}`;
-  const formula = `可抽人數 = 公會中 ${activeCount} - 已排除 ${excludedCount} - 獎項提供者 ${providerExcluded} = ${eligibleRemaining}；每位本輪機率 = 抽出人數 / 可抽人數。`;
+  const formula = `可抽人數 = 本場名單 ${activeCount} - 已排除 ${excludedCount} - 獎項提供者 ${providerExcluded} = ${eligibleRemaining}；每位本輪機率 = 抽出人數 / 可抽人數。`;
 
   window.ROOC_VUE_DRAW_ODDS?.render?.({
     targetSelector: "#draw-odds-card",
@@ -1007,6 +1027,7 @@ function openCreateEventDialog() {
   const form = $("#create-event-form");
   form.reset();
   fillCreateEventTitlePrefix(form);
+  renderEventRosterPreview("create");
   showModalDialog(dialog);
   refreshIcons();
   window.setTimeout(() => {
@@ -1018,7 +1039,130 @@ function openCreateEventDialog() {
 function closeCreateEventDialog() {
   const dialog = $("#create-event-dialog");
   $("#create-event-form").reset();
+  renderEventRosterPreview("create");
   closeModalDialog(dialog);
+}
+
+function parseEventRosterText(value) {
+  const rawNames = String(value || "")
+    .normalize("NFC")
+    .split(/[\n\r\t,，;；]+/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const names = [];
+  const duplicates = [];
+  const tooLong = [];
+  const seen = new Set();
+
+  rawNames.forEach((name) => {
+    if (name.length > 80) {
+      tooLong.push(name);
+      return;
+    }
+
+    const key = name.toLocaleLowerCase("zh-Hant");
+    if (seen.has(key)) {
+      duplicates.push(name);
+      return;
+    }
+
+    seen.add(key);
+    names.push(name);
+  });
+
+  return { names, duplicates, tooLong, rawCount: rawNames.length };
+}
+
+function eventRosterPreviewSelectors(mode) {
+  const prefix = mode === "create" ? "create-event-roster" : "event-roster";
+  return {
+    input: `#${prefix}-input`,
+    count: `#${prefix}-count`,
+    warning: `#${prefix}-warning`,
+    list: `#${prefix}-list`
+  };
+}
+
+function renderEventRosterPreview(mode = "create") {
+  const selectors = eventRosterPreviewSelectors(mode);
+  const input = $(selectors.input);
+  const list = $(selectors.list);
+  if (!input || !list) return { names: [], duplicates: [], tooLong: [], rawCount: 0 };
+
+  const parsed = parseEventRosterText(input.value);
+  setText(selectors.count, parsed.names.length > 0 ? `${parsed.names.length} 位有效角色` : "尚未貼上名單");
+
+  const warnings = [];
+  if (parsed.duplicates.length > 0) warnings.push(`已略過 ${parsed.duplicates.length} 個重複名稱`);
+  if (parsed.tooLong.length > 0) warnings.push(`${parsed.tooLong.length} 個名稱超過 80 字`);
+  setText(selectors.warning, warnings.join("；"));
+
+  list.innerHTML = parsed.names
+    .map((name, index) => `<li><span>${index + 1}</span><strong>${escapeHtml(name)}</strong></li>`)
+    .join("");
+  return parsed;
+}
+
+async function loadEventRosterMembers() {
+  ensureEventLoaded();
+  await ensureAppAdminPin();
+  const rows = await rpc("get_raffle_event_members", {
+    p_slug: state.event.slug,
+    p_admin_pin: state.appAdminPin
+  });
+  state.eventRosterMembers = rows || [];
+  state.eventRosterEditable = Boolean(rows?.[0]?.editable ?? (state.event.status === "live" && state.event.prizes.length === 0));
+  return state.eventRosterMembers;
+}
+
+async function openEventRosterDialog() {
+  await withBusy($("#console-action-bar"), async () => {
+    const members = await loadEventRosterMembers();
+    const dialog = $("#event-roster-dialog");
+    const form = $("#event-roster-form");
+    const input = $("#event-roster-input");
+    const saveButton = $("#save-event-roster");
+    input.value = members.map((member) => member.role_name || member.member_no).filter(Boolean).join("\n");
+    input.disabled = !state.eventRosterEditable;
+    saveButton.disabled = !state.eventRosterEditable;
+    $("#event-roster-lock-notice").hidden = state.eventRosterEditable;
+    form.dataset.rosterMode = members[0]?.roster_mode || "event";
+    renderEventRosterPreview("edit");
+    showModalDialog(dialog);
+    refreshIcons();
+    if (state.eventRosterEditable) window.setTimeout(() => input.focus(), 0);
+  });
+}
+
+function closeEventRosterDialog() {
+  const dialog = $("#event-roster-dialog");
+  $("#event-roster-form").reset();
+  $("#event-roster-input").disabled = false;
+  $("#save-event-roster").disabled = false;
+  $("#event-roster-lock-notice").hidden = true;
+  renderEventRosterPreview("edit");
+  closeModalDialog(dialog);
+}
+
+async function handleEventRosterSave(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const parsed = renderEventRosterPreview("edit");
+
+  await withBusy(form, async () => {
+    if (parsed.tooLong.length > 0) throw new Error("角色名稱不能超過 80 個字元。");
+    if (parsed.names.length === 0) throw new Error("請貼上至少一個角色名稱。");
+    await ensureAppAdminPin();
+    await rpc("set_raffle_event_roster", {
+      p_slug: state.event.slug,
+      p_admin_pin: state.appAdminPin,
+      p_member_names: parsed.names
+    });
+    const memberCount = parsed.names.length;
+    closeEventRosterDialog();
+    await loadEvent(state.event.slug);
+    showToast(`本場名單已更新：${memberCount} 位`, "success");
+  });
 }
 
 function fillCreateEventTitlePrefix(form) {
@@ -1141,15 +1285,19 @@ async function handleCreateEvent(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
+  const parsedRoster = renderEventRosterPreview("create");
 
   await withBusy(form, async () => {
     const title = cleanRequired(data.get("title"), "請輸入活動名稱。");
+    if (parsedRoster.tooLong.length > 0) throw new Error("角色名稱不能超過 80 個字元。");
+    if (parsedRoster.names.length === 0) throw new Error("請貼上至少一個角色名稱。");
     await ensureAppAdminPin();
-    const rows = await rpc("create_raffle_event", {
+    const rows = await rpc("create_raffle_event_with_roster", {
       p_title: title,
       p_slug: null,
       p_description: data.get("description"),
-      p_admin_pin: state.appAdminPin
+      p_admin_pin: state.appAdminPin,
+      p_member_names: parsedRoster.names
     });
     const created = rows?.[0];
     if (!created) throw new Error("活動建立失敗。");
@@ -1158,7 +1306,7 @@ async function handleCreateEvent(event) {
     closeCreateEventDialog();
     await refreshOpenEvents(created.slug);
     await loadEvent(created.slug);
-    showToast(`活動已建立：${title}`, "success");
+    showToast(`活動已建立：${title}（${parsedRoster.names.length} 位）`, "success");
   });
 }
 
@@ -1378,6 +1526,7 @@ function syncConsoleActionButtons(event = state.event) {
     statusIcon.dataset.lucide = !hasEvent || isLive ? "lock" : "unlock";
   }
   setText("#toggle-event-status span", statusLabel);
+  $("#open-event-roster-dialog").disabled = !hasEvent;
   $("#delete-event").disabled = !hasEvent;
   refreshIcons();
 }
@@ -1398,7 +1547,7 @@ function renderAdminConsoleStats(event) {
   return Boolean(window.ROOC_VUE_ADMIN_STATS?.render?.({
     targetSelector: "#admin-console-stats-grid",
     stats: [
-      { key: "active_members", label: "公會中成員", value: event.total_active_members ?? 0, rosterKey: "active_members" },
+      { key: "active_members", label: "本場名單", value: event.total_active_members ?? 0, rosterKey: "active_members" },
       { key: "eligible_members", label: "可抽名單", value: event.eligible_count ?? 0, rosterKey: "eligible_members" },
       { key: "excluded_members", label: "已排除", value: event.excluded_count ?? 0, rosterKey: "excluded_members" },
       { key: "awarded_members", label: "已發獎", value: event.award_count ?? 0, rosterKey: "awarded_members" }
@@ -1549,8 +1698,8 @@ function getRosterCount(rosterKey, source = "console") {
 function rosterDialogConfig(rosterKey) {
   const configs = {
     active_members: {
-      title: "公會中成員名單",
-      empty: "目前沒有公會中成員。"
+      title: "本場抽獎名單",
+      empty: "目前沒有本場名單成員。"
     },
     eligible_members: {
       title: "剩餘可抽名單",
@@ -1648,7 +1797,7 @@ function historyDrawMeta(draw) {
 function statMemberMeta(member) {
   return [
     member.occupation ? `職業：${member.occupation}` : "",
-    member.joined_dc === true ? "DC：已加入" : member.joined_dc === false ? "DC：未加入" : "",
+    member.joined_dc === true ? "DC：已加入" : "",
     member.reason ? `原因：${drawStatusText[member.reason] || statReasonText(member.reason)}` : "",
     member.prize_name ? `獎項：${member.prize_name}` : ""
   ].filter(Boolean).join(" / ");
@@ -1711,7 +1860,7 @@ function renderPendingDrawCard({ pendingDraws, visibleDraws, visibleCount, hidde
 function buildPendingDrawRows(draws) {
   return draws.map((pending) => ({
     id: pending.id,
-    title: `${pending.role_name || ""}（${pending.member_no || ""}）`,
+    title: memberPlainText(pending.member_no, pending.role_name),
     description: [
       pending.prize_name,
       `提供者：${pending.provider || ""}`,
@@ -2811,6 +2960,9 @@ function isMissingEventError(error) {
 
 function clearLoadedEvent() {
   state.event = null;
+  state.eventRosterMembers = [];
+  state.eventRosterEditable = false;
+  state.providerMembers = [];
   $("#console-detail").hidden = true;
   $("#console-empty").hidden = false;
   setText("#console-status", "未載入");
@@ -4854,6 +5006,10 @@ function friendlyError(message) {
   if (text.includes("App admin PIN must be at least 4 characters") || text.includes("成員管理 PIN 至少需要 4 個字元") || text.includes("管理密碼至少需要 4 個字元")) return "管理密碼至少需要 4 個字元。";
   if (text.includes("Raffle event not found") || text.includes("找不到活動")) return "找不到活動。";
   if (text.includes("Raffle event title already exists") || text.includes("活動名稱已存在")) return "活動名稱已存在。";
+  if (text.includes("本場名單已鎖定")) return "本場名單已鎖定；請在新增獎項前完成修改。";
+  if (text.includes("請貼上至少一個")) return "請貼上至少一個角色名稱。";
+  if (text.includes("角色名稱") && text.includes("超過 80")) return "角色名稱不能超過 80 個字元。";
+  if (text.includes("與既有會員編號相同")) return text;
   if (text.includes("raffle_events_slug_check")) return "活動代碼格式不正確。請使用至少 3 個小寫英文字母、數字或連字號。";
   if (text.includes("new row for relation") && text.includes("violates check constraint")) return "資料格式不符合系統規則，請檢查輸入內容。";
   if (text.includes("duplicate key value violates unique constraint") && text.includes("raffle_events_title")) return "活動名稱已存在。";

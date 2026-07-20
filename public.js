@@ -1105,7 +1105,7 @@ function buildPublicLiveRollerLabels() {
 
   return [
     ...uniqueLabels,
-    "ROOC 星辰",
+    "ROOC 微光傾城",
     "公會名單轉動中",
     "幸運值校準中",
     "下一位會是誰",

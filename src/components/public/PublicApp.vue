@@ -21,7 +21,7 @@ onMounted(() => {
   <main class="app-shell public-shell">
     <header class="hero public-hero">
       <HeroHeader
-        title="星辰"
+        title="微光傾城"
         action-href="index.html"
         action-icon="lock-keyhole"
         action-text="管理後台"

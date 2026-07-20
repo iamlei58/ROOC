@@ -10,6 +10,7 @@ import AdminPinDialogContent from "./AdminPinDialogContent.vue";
 import BonusPrizeDialogContent from "./BonusPrizeDialogContent.vue";
 import CreateEventDialogContent from "./CreateEventDialogContent.vue";
 import DrawControlsContent from "./DrawControlsContent.vue";
+import EventRosterDialogContent from "./EventRosterDialogContent.vue";
 import MemberCreateDialogContent from "./MemberCreateDialogContent.vue";
 import MemberEditDialogContent from "./MemberEditDialogContent.vue";
 import MemberImportDialogContent from "./MemberImportDialogContent.vue";
@@ -46,7 +47,7 @@ onMounted(() => {
   <main class="app-shell">
     <header class="hero">
       <HeroHeader
-        title="星辰"
+        title="微光傾城"
         action-href="public.html"
         action-icon="users"
         action-text="成員入口"
@@ -87,6 +88,10 @@ onMounted(() => {
           <div class="console-toolbar-group console-toolbar-group-actions">
             <p class="section-label">目前活動</p>
             <div class="button-row console-actions" id="console-action-bar" aria-label="目前活動操作">
+              <button class="btn secondary" type="button" id="open-event-roster-dialog" disabled>
+                <i data-lucide="clipboard-list"></i>
+                <span>本場名單</span>
+              </button>
               <button class="btn secondary" type="button" id="toggle-event-status" disabled>
                 <i data-lucide="lock"></i>
                 <span>活動狀態</span>
@@ -210,9 +215,15 @@ onMounted(() => {
           </div>
         </dialog>
 
-        <dialog class="modal compact-modal" id="create-event-dialog">
+        <dialog class="modal roster-editor-modal" id="create-event-dialog">
           <div class="modal-shell">
             <CreateEventDialogContent />
+          </div>
+        </dialog>
+
+        <dialog class="modal roster-editor-modal" id="event-roster-dialog">
+          <div class="modal-shell">
+            <EventRosterDialogContent />
           </div>
         </dialog>
       </section>

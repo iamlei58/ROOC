@@ -165,7 +165,7 @@ function memberPlainText(memberNo, displayName) {
     <section class="audit-section">
       <h4>機率公式</h4>
       <div class="audit-grid">
-        <div><span>公會中成員</span><strong>{{ displayAuditValue(audit.active_member_count) }}</strong></div>
+        <div><span>本場名單</span><strong>{{ displayAuditValue(audit.active_member_count) }}</strong></div>
         <div><span>已排除</span><strong>{{ displayAuditValue(audit.excluded_count_before) }}</strong></div>
         <div><span>提供者排除</span><strong>{{ providerExcluded }}</strong></div>
         <div><span>可抽人數</span><strong>{{ displayAuditValue(audit.eligible_count) }}</strong></div>
@@ -174,7 +174,7 @@ function memberPlainText(memberNo, displayName) {
         v-if="canShowEligibleFormula"
         class="description"
       >
-        可抽人數 = 公會中 {{ audit.active_member_count }} - 已排除 {{ audit.excluded_count_before }} - 提供者排除 {{ providerExcluded }} = {{ displayAuditValue(audit.eligible_count) }}
+        可抽人數 = 本場名單 {{ audit.active_member_count }} - 已排除 {{ audit.excluded_count_before }} - 提供者排除 {{ providerExcluded }} = {{ displayAuditValue(audit.eligible_count) }}
       </p>
       <p class="description">
         本次第 {{ displayAuditValue(audit.round_index) }} 抽的單步機率 = 1 / {{ displayAuditValue(audit.eligible_count) }} = {{ formatPercent(audit.step_probability) }}；本輪一次抽出 {{ displayAuditValue(audit.round_draw_count) }} 位，開抽時每人本輪機率約 {{ formatPercent(audit.round_probability) }}。
